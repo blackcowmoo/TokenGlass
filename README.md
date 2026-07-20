@@ -1,7 +1,48 @@
-# Tauri + React + Typescript
+# 📋 TokenGlass (AI 토큰 모니터링 프로그램)
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+## 1. 프로그램의 핵심 목표 (Value Proposition)
+- **목적**: 사용자가 다양한 AI 서비스(OpenAI, Anthropic, Google Gemini 등)를 사용할 때 발생하는 토큰 수와 실시간 비용을 추적 및 제한하여 '비용 폭탄'을 방지함.
+- **타깃 유저**: AI API를 자주 쓰는 개발자, 프롬프트 엔지니어, 대량의 텍스트 분석을 하는 연구원.
 
-## Recommended IDE Setup
+## 2. 주요 기능 (Core Features)
+- **실시간 토큰 카운팅 & 비용 변환**
+  - 사용자가 입력한 텍스트(프롬프트)나 붙여넣은 텍스트의 토큰 수를 실시간으로 계산.
+  - API 모델별(예: GPT-4o, Claude 3.5 Sonnet, Gemini 1.5 Pro 등) 단가를 반영해 예상 비용(USD/KRW)으로 즉시 환산.
+- **클립보드 감지 모드 (Smart Monitoring)**
+  - 사용자가 텍스트를 복사(Ctrl + C)하면 프로그램이 자동으로 토큰을 계산해 화면 구석에 작은 팝업(오버레이)으로 잠깐 보여주는 기능.
+- **일일/월간 대시보드 & 예산 경고**
+  - 오늘 혹은 이번 달에 사용한 누적 토큰과 비용을 그래프로 시각화.
+  - 설정한 예산(예: "이번 달 50달러")의 80%를 초과하면 윈도우 알림창으로 경고 발송.
+- **로컬 기록 저장 (Privacy First)**
+  - 어떤 프롬프트에 토큰이 얼마나 쓰였는지 로그를 저장하되, 보안을 위해 외부 서버가 아닌 사용자의 PC(로컬)에만 저장.
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## 3. UI/UX 디자인 방향 (윈도우 최적화)
+- **시스템 트레이(System Tray) 상주**: 창을 닫아도 시계 옆 트레이 아이콘에서 계속 실행됨.
+- **미니 뷰 / 플로팅 위젯**: 화면 한구석에 항상 위에 플로팅되는 아주 작고 투명한 위젯을 제공하여, 현재 토큰 수나 비용을 실시간으로 확인.
+- **다크 모드 지원**: 개발자들이 선호하는 윈도우 시스템 테마 맞춤 다크 모드 필수.
+
+---
+
+## 💡 추가 고려 및 제안 사항 (Architecture & Extensions)
+
+기존 기획안을 바탕으로 성공적인 제품을 만들기 위해 아래와 같은 추가 요소들을 제안합니다.
+
+1. **기술 스택 최적화 (Tauri 활용)**
+   - 현재 프로젝트에 설정된 **Tauri + React + TypeScript** 조합은 완벽한 선택입니다. 
+   - Tauri는 Electron보다 메모리와 리소스 사용량이 훨씬 적기 때문에, 백그라운드에 항상 켜두고 시스템 트레이에서 동작하는 모니터링 앱에 가장 적합합니다.
+
+2. **모델별 정확한 토크나이저(Tokenizer) 로컬 탑재**
+   - 모델마다 텍스트를 토큰으로 분할하는 방식이 다릅니다 (예: OpenAI는 `tiktoken`, Google은 `sentencepiece` 기반 등).
+   - 외부 API 통신 없이 즉각적인 계산과 프라이버시 보호를 위해, 주요 토크나이저 모듈을 WebAssembly(WASM) 혹은 Rust 코어로 내장하여 완벽한 오프라인 계산을 지원해야 합니다.
+
+3. **실시간/동적 가격표 업데이트 (Dynamic Pricing)**
+   - AI API 단가는 자주 변경됩니다. 앱을 매번 업데이트하지 않더라도 최신 단가를 반영할 수 있도록, 원격(예: GitHub Gist 또는 자체 서버 JSON)에서 **주기적으로 최신 가격표를 가져와 캐싱**하는 기능이 필요합니다.
+
+4. **글로벌 단축키 (Global Hotkeys)**
+   - 단순 복사(`Ctrl + C`) 외에도, 텍스트를 드래그한 상태에서 특정 단축키(예: `Ctrl + Shift + T`)를 누르면 바로 토큰/비용 팝업이 뜨도록 하는 사용자 정의 단축키 기능이 있으면 사용성이 극대화됩니다.
+
+5. **사용 내역 내보내기 (Export Data)**
+   - 회사나 프로젝트 단위로 비용 청구(Reimbursement)를 해야 하는 개발자를 위해, 월간 사용 내역을 **CSV 또는 PDF로 내보내는 영수증/리포트 기능**을 추가하면 비즈니스 툴로서의 가치가 올라갑니다.
+
+6. **완전 오프라인 모드 & 개인정보 강조**
+   - 프라이버시가 중요한 타깃 유저층(기밀 문서를 다루는 연구원 등)을 고려하여, "이 앱은 입력한 텍스트를 외부 서버로 절대 전송하지 않으며 완전 오프라인으로 작동합니다"라는 점을 UI 전면에 안내하는 것이 좋습니다.
