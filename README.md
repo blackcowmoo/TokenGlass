@@ -21,6 +21,41 @@
 - **미니 뷰 / 플로팅 위젯**: 화면 한구석에 항상 위에 플로팅되는 아주 작고 투명한 위젯을 제공하여, 현재 토큰 수나 비용을 실시간으로 확인.
 - **다크 모드 지원**: 개발자들이 선호하는 윈도우 시스템 테마 맞춤 다크 모드 필수.
 
+## 4. OpenAI 사용량 연동
+
+TokenGlass는 서로 다른 과금 체계를 분리해 표시합니다.
+
+| 연결 방식 | 조회 데이터 | 필요한 인증 |
+| --- | --- | --- |
+| OpenAI API | 이번 달 비용, 오늘 비용, 모델별 입·출력 토큰 | OpenAI **조직 관리자 API 키** (`sk-admin-...`) |
+| ChatGPT / Codex 구독 | 플랜, Codex 제한 사용률·초기화 시각, 누적·일별 토큰 사용량 | ChatGPT OAuth 로그인 및 로컬 Codex CLI |
+
+### OpenAI API 사용량
+
+1. OpenAI Platform의 조직 관리자 키를 발급합니다. 일반 프로젝트 API 키로는 Usage/Costs API를 조회할 수 없습니다.
+2. 앱의 설정(⚙)에서 `OpenAI 조직 관리자 API 키`를 입력하고 **저장 및 동기화**를 선택합니다.
+3. 대시보드에서 이번 달 누적 비용, 오늘 API 비용, 모델별 토큰 사용량을 확인합니다.
+
+### ChatGPT / Codex 구독 사용량
+
+1. [Codex CLI](https://developers.openai.com/codex/cli/)를 설치하고 터미널에서 `codex` 명령을 사용할 수 있게 합니다.
+2. 앱의 **ChatGPT 로그인**을 선택합니다.
+3. 브라우저에서 ChatGPT OAuth 로그인을 완료합니다.
+4. 앱에서 새로고침(↻)을 선택하면 플랜, Codex 제한 사용률, 초기화 시각 및 토큰 활동이 표시됩니다.
+
+OAuth 토큰은 TokenGlass가 직접 저장하거나 전송하지 않습니다. 로컬 Codex App Server가 인증 토큰의 보관과 갱신을 담당하며, TokenGlass는 App Server의 사용량 조회 결과만 읽습니다.
+
+> ChatGPT/Codex 구독 한도와 OpenAI API 비용은 별도 체계입니다. API 비용은 조직 관리자 키로, 구독 한도 및 토큰 활동은 ChatGPT OAuth로 조회해야 합니다.
+
+### 개발 환경 검증
+
+```bash
+pnpm build
+cd src-tauri && cargo check
+```
+
+현재 구현은 Codex App Server의 `account/read`, `account/rateLimits/read`, `account/usage/read` 메서드를 사용합니다.
+
 ---
 
 ## 💡 추가 고려 및 제안 사항 (Architecture & Extensions)
