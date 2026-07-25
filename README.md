@@ -28,7 +28,7 @@ TokenGlass는 서로 다른 과금 체계를 분리해 표시합니다.
 | 연결 방식 | 조회 데이터 | 필요한 인증 |
 | --- | --- | --- |
 | OpenAI API | 이번 달 비용, 오늘 비용, 모델별 입·출력 토큰 | OpenAI **조직 관리자 API 키** (`sk-admin-...`) |
-| ChatGPT / Codex 구독 | 플랜, Codex 제한 사용률·초기화 시각, 누적·일별 토큰 사용량 | ChatGPT OAuth 로그인 및 로컬 Codex CLI |
+| ChatGPT / Codex 구독 | 플랜, Codex 제한 사용률·초기화 시각, 누적·일별 토큰 사용량 | ChatGPT OAuth 로그인 |
 
 ### OpenAI API 사용량
 
@@ -38,12 +38,13 @@ TokenGlass는 서로 다른 과금 체계를 분리해 표시합니다.
 
 ### ChatGPT / Codex 구독 사용량
 
-1. [Codex CLI](https://developers.openai.com/codex/cli/)를 설치하고 터미널에서 `codex` 명령을 사용할 수 있게 합니다.
-2. 앱의 **ChatGPT 로그인**을 선택합니다.
-3. 브라우저에서 ChatGPT OAuth 로그인을 완료합니다.
-4. 앱에서 새로고침(↻)을 선택하면 플랜, Codex 제한 사용률, 초기화 시각 및 토큰 활동이 표시됩니다.
+1. 앱의 **ChatGPT 로그인**을 선택합니다.
+2. 브라우저에서 ChatGPT OAuth 로그인을 완료합니다.
+3. 앱에서 새로고침(↻)을 선택하면 플랜, Codex 제한 사용률, 초기화 시각 및 토큰 활동이 표시됩니다.
 
-OAuth 토큰은 TokenGlass가 직접 저장하거나 전송하지 않습니다. 로컬 Codex App Server가 인증 토큰의 보관과 갱신을 담당하며, TokenGlass는 App Server의 사용량 조회 결과만 읽습니다.
+OAuth 토큰은 TokenGlass가 직접 저장하거나 전송하지 않습니다. 앱 번들에 포함된 Codex App Server 사이드카가 인증 토큰의 보관과 갱신을 담당하며, TokenGlass는 App Server의 사용량 조회 결과만 읽습니다. 따라서 사용자는 별도로 Codex CLI를 설치할 필요가 없습니다.
+
+> `pnpm build` 또는 `pnpm tauri build`는 공식 Codex 설치 프로그램으로 현재 플랫폼용 사이드카를 자동 준비합니다. 사이드카 실행 파일은 Git에 커밋하지 않으며, 최종 사용자에게는 Codex CLI 설치가 필요하지 않습니다. 현재 자동 준비 대상은 Apple Silicon macOS와 Windows x64이며, Intel macOS 및 Linux는 별도 target triple용 준비가 필요합니다.
 
 > ChatGPT/Codex 구독 한도와 OpenAI API 비용은 별도 체계입니다. API 비용은 조직 관리자 키로, 구독 한도 및 토큰 활동은 ChatGPT OAuth로 조회해야 합니다.
 

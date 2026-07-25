@@ -4,8 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "prepare:sidecar": "node scripts/prepare-codex-sidecar.mjs",
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "pnpm prepare:sidecar && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },

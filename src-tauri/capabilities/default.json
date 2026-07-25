@@ -8,6 +8,16 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "store:default"
+    "store:default",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/codex",
+          "sidecar": true,
+          "args": ["app-server"]
+        }
+      ]
+    }
   ]
 }

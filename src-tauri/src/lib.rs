@@ -2,17 +2,18 @@ use serde::Serialize;
 use serde_json::Value;
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
-    process::{Child, ChildStdin, Command, Stdio},
     sync::{mpsc, Arc, Mutex},
     time::Duration,
+};
+use tauri_plugin_shell::{
+    process::{CommandChild, CommandEvent},
+    ShellExt,
 };
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1/organization";
 
 struct RunningAppServer {
-    _child: Child,
-    stdin: ChildStdin,
+    _child: CommandChild,
     next_id: u64,
     waiters: Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>>,
 }
@@ -23,26 +24,26 @@ struct CodexAppServer {
 }
 
 impl CodexAppServer {
-    fn start_if_needed(&self) -> Result<(), String> {
+    fn start_if_needed(&self, app: &tauri::AppHandle) -> Result<(), String> {
         let mut server = self.server.lock().map_err(|_| "Codex 연결 상태를 잠글 수 없습니다.".to_string())?;
         if server.is_some() {
             return Ok(());
         }
 
-        let mut child = Command::new("codex")
+        let (mut receiver, child) = app
+            .shell()
+            .sidecar("codex")
+            .map_err(|error| format!("번들된 Codex App Server를 찾을 수 없습니다: {error}"))?
             .arg("app-server")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
             .spawn()
-            .map_err(|error| format!("Codex CLI를 시작할 수 없습니다. Codex를 설치한 뒤 다시 시도하세요: {error}"))?;
-        let stdin = child.stdin.take().ok_or("Codex App Server 입력 스트림을 열 수 없습니다.")?;
-        let stdout = child.stdout.take().ok_or("Codex App Server 출력 스트림을 열 수 없습니다.")?;
+            .map_err(|error| format!("번들된 Codex App Server를 시작할 수 없습니다: {error}"))?;
         let waiters = Arc::new(Mutex::new(HashMap::<u64, mpsc::Sender<Value>>::new()));
         let reader_waiters = Arc::clone(&waiters);
 
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            while let Some(event) = tauri::async_runtime::block_on(receiver.recv()) {
+                let CommandEvent::Stdout(bytes) = event else { continue };
+                let Ok(line) = String::from_utf8(bytes) else { continue };
                 let Ok(message) = serde_json::from_str::<Value>(&line) else { continue };
                 let Some(id) = message.get("id").and_then(Value::as_u64) else { continue };
                 if let Ok(mut pending) = reader_waiters.lock() {
@@ -53,7 +54,7 @@ impl CodexAppServer {
             }
         });
 
-        *server = Some(RunningAppServer { _child: child, stdin, next_id: 1, waiters });
+        *server = Some(RunningAppServer { _child: child, next_id: 1, waiters });
         drop(server);
         self.request("initialize", serde_json::json!({
             "clientInfo": { "name": "tokenglass", "title": "TokenGlass", "version": env!("CARGO_PKG_VERSION") }
@@ -65,8 +66,7 @@ impl CodexAppServer {
         let mut server = self.server.lock().map_err(|_| "Codex 연결 상태를 잠글 수 없습니다.".to_string())?;
         let running = server.as_mut().ok_or("Codex App Server가 시작되지 않았습니다.")?;
         let message = serde_json::json!({ "method": method, "params": params });
-        writeln!(running.stdin, "{}", message).map_err(|error| format!("Codex에 요청을 보낼 수 없습니다: {error}"))?;
-        running.stdin.flush().map_err(|error| format!("Codex 요청을 전송할 수 없습니다: {error}"))
+        running._child.write(format!("{message}\n").as_bytes()).map_err(|error| format!("Codex에 요청을 보낼 수 없습니다: {error}"))
     }
 
     fn request(&self, method: &str, params: Value) -> Result<Value, String> {
@@ -78,7 +78,7 @@ impl CodexAppServer {
             let (sender, receiver) = mpsc::channel();
             running.waiters.lock().map_err(|_| "Codex 응답 대기열을 잠글 수 없습니다.".to_string())?.insert(id, sender);
             let message = serde_json::json!({ "method": method, "id": id, "params": params });
-            if let Err(error) = writeln!(running.stdin, "{}", message).and_then(|_| running.stdin.flush()) {
+            if let Err(error) = running._child.write(format!("{message}\n").as_bytes()) {
                 if let Ok(mut pending) = running.waiters.lock() { pending.remove(&id); }
                 return Err(format!("Codex에 요청을 보낼 수 없습니다: {error}"));
             }
@@ -128,8 +128,8 @@ struct ChatGptSubscriptionUsage {
 }
 
 #[tauri::command]
-fn start_chatgpt_login(app_server: tauri::State<'_, CodexAppServer>) -> Result<ChatGptLogin, String> {
-    app_server.start_if_needed()?;
+fn start_chatgpt_login(app: tauri::AppHandle, app_server: tauri::State<'_, CodexAppServer>) -> Result<ChatGptLogin, String> {
+    app_server.start_if_needed(&app)?;
     let result = app_server.request("account/login/start", serde_json::json!({
         "type": "chatgpt",
         "useHostedLoginSuccessPage": true,
@@ -142,8 +142,8 @@ fn start_chatgpt_login(app_server: tauri::State<'_, CodexAppServer>) -> Result<C
 }
 
 #[tauri::command]
-fn fetch_chatgpt_subscription_usage(app_server: tauri::State<'_, CodexAppServer>) -> Result<ChatGptSubscriptionUsage, String> {
-    app_server.start_if_needed()?;
+fn fetch_chatgpt_subscription_usage(app: tauri::AppHandle, app_server: tauri::State<'_, CodexAppServer>) -> Result<ChatGptSubscriptionUsage, String> {
+    app_server.start_if_needed(&app)?;
     let account = app_server.request("account/read", serde_json::json!({ "refreshToken": true }))?;
     let account_info = account.get("account").ok_or("ChatGPT에 먼저 로그인하세요.")?;
     if account_info.get("type").and_then(Value::as_str) != Some("chatgpt") {
@@ -330,6 +330,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(CodexAppServer::default())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             fetch_openai_usage,
