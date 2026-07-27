@@ -10,7 +10,9 @@ const targetTriple = process.platform === "win32"
   ? "x86_64-pc-windows-msvc"
   : process.platform === "darwin" && process.arch === "arm64"
     ? "aarch64-apple-darwin"
-    : null;
+    : process.platform === "linux" && process.arch === "x64"
+      ? "x86_64-unknown-linux-gnu"
+      : null;
 
 if (!targetTriple) {
   throw new Error(`Codex sidecar preparation is not configured for ${process.platform}/${process.arch}.`);

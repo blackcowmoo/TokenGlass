@@ -52,10 +52,18 @@ function App() {
 
   useEffect(() => {
     void (async () => {
-      const store = await Store.load("settings.json");
-      const key = (await store.get<string>("tokenglass_openai_admin_key")) ?? "";
-      setAdminKey(key);
-      if (key) await refresh(key);
+      try {
+        if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+          const store = await Store.load("settings.json");
+          const key = (await store.get<string>("tokenglass_openai_admin_key")) ?? "";
+          setAdminKey(key);
+          if (key) await refresh(key);
+        } else {
+          console.warn("Tauri 환경이 아닙니다. 웹 브라우저 모드로 동작합니다.");
+        }
+      } catch (error) {
+        console.error("설정을 불러오는 중 오류가 발생했습니다:", error);
+      }
     })();
   }, []);
 
