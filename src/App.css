@@ -31,11 +31,11 @@ body {
   margin: 0;
   padding: 0;
   font-family: var(--font-family);
-  background-color: var(--color-bg);
+  background-color: transparent;
   color: var(--color-text-primary);
   user-select: none;
   -webkit-user-select: none;
-  overflow: auto;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -331,4 +331,48 @@ body {
 
 .test-textarea:focus {
   border-color: rgba(59, 130, 246, 0.5);
+}
+
+/* Widget Styles */
+.widget-root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.widget-content {
+  background: var(--color-glass-bg);
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+  border: 1px solid var(--color-glass-border);
+  border-radius: 16px;
+  padding: 12px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-shadow: var(--shadow-glass);
+  cursor: grab;
+}
+
+.widget-content:active {
+  cursor: grabbing;
+}
+
+.widget-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+}
+
+.widget-value {
+  font-size: var(--text-2xl);
+  font-weight: 800;
+  color: var(--color-success);
+  pointer-events: none;
 }

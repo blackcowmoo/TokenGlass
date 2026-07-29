@@ -12,9 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "tokenglass",
-        "width": 800,
-        "height": 600
+        "title": "TokenGlass",
+        "width": 400,
+        "height": 600,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "skipTaskbar": true
       }
     ],
     "security": {

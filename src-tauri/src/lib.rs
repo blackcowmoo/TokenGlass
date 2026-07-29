@@ -9,6 +9,12 @@ use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
     ShellExt,
 };
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager, WindowEvent, WebviewWindowBuilder, WebviewUrl
+};
+use tauri_plugin_store::StoreExt;
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1/organization";
 
@@ -488,6 +494,101 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let quit_i = MenuItem::with_id(app, "quit", "종료 (Quit)", true, None::<&str>)?;
+            let toggle_widget_i = MenuItem::with_id(app, "toggle_widget", "위젯 켜기/끄기 (Toggle Widget)", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&toggle_widget_i, &quit_i])?;
+
+            let app_handle = app.handle().clone();
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .on_menu_event(move |app, event| match event.id.as_ref() {
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    "toggle_widget" => {
+                        if let Some(widget) = app.get_webview_window("widget") {
+                            let _ = widget.close();
+                            if let Ok(store) = app.store("settings.json") {
+                                store.set("tokenglass_show_widget", serde_json::json!(false));
+                                let _ = store.save();
+                            }
+                        } else {
+                            let _ = WebviewWindowBuilder::new(app, "widget", WebviewUrl::App("/widget".into()))
+                                .title("Widget")
+                                .inner_size(200.0, 100.0)
+                                .transparent(true)
+                                .decorations(false)
+                                .always_on_top(true)
+                                .skip_taskbar(true)
+                                .build();
+                            if let Ok(store) = app.store("settings.json") {
+                                store.set("tokenglass_show_widget", serde_json::json!(true));
+                                let _ = store.save();
+                            }
+                        }
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            if let Ok(Some(monitor)) = window.current_monitor() {
+                                let physical_size = monitor.size();
+                                let physical_position = monitor.position();
+                                
+                                if let Ok(window_size) = window.outer_size() {
+                                    let x = physical_position.x + physical_size.width as i32 - window_size.width as i32 - 20;
+                                    let y = physical_position.y + physical_size.height as i32 - window_size.height as i32 - 60;
+                                    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+                                }
+                            }
+                            
+                            let is_visible = window.is_visible().unwrap_or(false);
+                            if is_visible {
+                                let _ = window.hide();
+                            } else {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    }
+                })
+                .build(app)?;
+
+            // Load widget on startup if enabled
+            if let Ok(store) = app.store("settings.json") {
+                if let Some(val) = store.get("tokenglass_show_widget") {
+                    if val.as_bool().unwrap_or(false) {
+                        let _ = WebviewWindowBuilder::new(app, "widget", WebviewUrl::App("/widget".into()))
+                            .title("Widget")
+                            .inner_size(200.0, 100.0)
+                            .transparent(true)
+                            .decorations(false)
+                            .always_on_top(true)
+                            .skip_taskbar(true)
+                            .build();
+                    }
+                }
+            }
+
+            Ok(())
+        })
+        .on_window_event(|window, event| match event {
+            WindowEvent::Focused(false) => {
+                if window.label() == "main" {
+                    let _ = window.hide();
+                }
+            }
+            _ => {}
+        })
         .invoke_handler(tauri::generate_handler![
             fetch_openai_usage,
             start_chatgpt_login,
