@@ -29,6 +29,32 @@ struct CodexAppServer {
     server: Mutex<Option<RunningAppServer>>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeDiagnostics {
+    app_version: String,
+    operating_system: String,
+    architecture: String,
+    test_mode: bool,
+    sidecar_available: bool,
+    sidecar_running: bool,
+}
+
+#[cfg(test)]
+fn sanitize_diagnostic_text(value: &str) -> String {
+    let mut redacted = value.to_string();
+    for prefix in ["sk-", "Bearer "] {
+        while let Some(start) = redacted.find(prefix) {
+            let suffix = &redacted[start + prefix.len()..];
+            let end = suffix
+                .find(|character: char| character.is_whitespace() || matches!(character, ',' | ';' | '"'))
+                .unwrap_or(suffix.len());
+            redacted.replace_range(start..start + prefix.len() + end, "[redacted]");
+        }
+    }
+    redacted
+}
+
 impl CodexAppServer {
     fn start_if_needed(&self, app: &tauri::AppHandle) -> Result<(), String> {
         let mut server = self
@@ -487,6 +513,27 @@ async fn fetch_openai_usage(admin_key: String) -> Result<OpenAiUsage, String> {
     })
 }
 
+#[tauri::command]
+fn get_runtime_diagnostics(
+    app: tauri::AppHandle,
+    app_server: tauri::State<'_, CodexAppServer>,
+) -> RuntimeDiagnostics {
+    let sidecar_available = app.shell().sidecar("codex").is_ok();
+    let sidecar_running = app_server
+        .server
+        .lock()
+        .map(|server| server.is_some())
+        .unwrap_or(false);
+    RuntimeDiagnostics {
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        operating_system: std::env::consts::OS.to_string(),
+        architecture: std::env::consts::ARCH.to_string(),
+        test_mode: option_env!("TOKENGLASS_TEST_MODE") == Some("true"),
+        sidecar_available,
+        sidecar_running,
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -592,8 +639,23 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             fetch_openai_usage,
             start_chatgpt_login,
-            fetch_chatgpt_subscription_usage
+            fetch_chatgpt_subscription_usage,
+            get_runtime_diagnostics
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::sanitize_diagnostic_text;
+
+    #[test]
+    fn diagnostics_redact_api_keys_and_bearer_tokens() {
+        let value = "key sk-admin-secret-value Authorization: Bearer oauth-secret";
+        let sanitized = sanitize_diagnostic_text(value);
+        assert!(!sanitized.contains("secret-value"));
+        assert!(!sanitized.contains("oauth-secret"));
+        assert!(sanitized.contains("[redacted]"));
+    }
 }

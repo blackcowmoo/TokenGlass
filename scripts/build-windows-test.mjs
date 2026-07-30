@@ -1,0 +1,14 @@
+import { spawnSync } from "node:child_process";
+
+if (process.platform !== "win32" || process.arch !== "x64") {
+  throw new Error("Windows x64 테스트 빌드는 Windows x64에서만 생성할 수 있습니다.");
+}
+
+const env = { ...process.env, VITE_TOKENGLASS_TEST_MODE: "true", TOKENGLASS_TEST_MODE: "true" };
+const run = (args) => {
+  const result = spawnSync("pnpm.cmd", args, { stdio: "inherit", env });
+  if (result.status !== 0) process.exit(result.status ?? 1);
+};
+
+run(["prepare:sidecar"]);
+run(["exec", "tauri", "build"]);

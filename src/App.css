@@ -82,6 +82,8 @@ body {
   align-items: center;
   gap: 6px;
 }
+.test-mode-badge { color: #fcd34d; font-size: .62rem; letter-spacing: .06em; }
+.diagnostics-output { margin: 0; padding: 12px; border-radius: 8px; background: rgba(0, 0, 0, .25); color: var(--color-text-secondary); font: .72rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; user-select: text; }
 
 .icon-btn {
   background: none;

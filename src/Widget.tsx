@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Store } from "@tauri-apps/plugin-store";
 import "./App.css";
+import { isTestMode, sampleUsage } from "./testSupport";
 
 type Usage = {
   totalBilled: number;
@@ -15,6 +16,10 @@ export default function Widget() {
     let interval: number;
     
     const fetchUsage = async () => {
+      if (isTestMode) {
+        setUsage(sampleUsage);
+        return;
+      }
       try {
         if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
           const store = await Store.load("settings.json");
@@ -38,7 +43,7 @@ export default function Widget() {
   return (
     <div className="widget-root" data-tauri-drag-region>
       <div className="widget-content" data-tauri-drag-region>
-        <span className="widget-label" data-tauri-drag-region>Today</span>
+        <span className="widget-label" data-tauri-drag-region>{isTestMode ? "Test · Today" : "Today"}</span>
         <span className="widget-value" data-tauri-drag-region>{usage ? `$${usage.todayUsage.toFixed(2)}` : "—"}</span>
       </div>
     </div>

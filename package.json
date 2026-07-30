@@ -7,6 +7,9 @@
     "prepare:sidecar": "node scripts/prepare-codex-sidecar.mjs",
     "dev": "vite",
     "build": "pnpm prepare:sidecar && tsc && vite build",
+    "build:windows-test": "node scripts/build-windows-test.mjs",
+    "smoke:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-windows-test.ps1",
+    "test:windows-support": "cargo test --manifest-path src-tauri/Cargo.toml diagnostics",
     "preview": "vite preview",
     "tauri": "tauri"
   },

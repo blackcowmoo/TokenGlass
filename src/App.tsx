@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Store } from "@tauri-apps/plugin-store";
 import "./App.css";
+import { isTestMode, redactDiagnosticText, sampleUsage } from "./testSupport";
 
 type Usage = {
   totalBilled: number;
@@ -22,6 +23,15 @@ type SubscriptionUsage = {
   dailyUsage: { startDate: string; tokens: number }[];
 };
 
+type RuntimeDiagnostics = {
+  appVersion: string;
+  operatingSystem: string;
+  architecture: string;
+  testMode: boolean;
+  sidecarAvailable: boolean;
+  sidecarRunning: boolean;
+};
+
 const colors = ["#10A37F", "#3B82F6", "#A855F7", "#F59E0B", "#EC4899"];
 
 function App() {
@@ -33,8 +43,14 @@ function App() {
   const [subscription, setSubscription] = useState<SubscriptionUsage | null>(null);
   const [subscriptionStatus, setSubscriptionStatus] = useState("ChatGPT OAuth 로그인을 연결하세요.");
   const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<string | null>(null);
 
   const refresh = async (key = adminKey) => {
+    if (isTestMode) {
+      setUsage(sampleUsage);
+      setStatus("TEST MODE · Sample data · network disabled");
+      return;
+    }
     if (!key.trim()) return;
     setLoading(true);
     setStatus("OpenAI 사용량을 불러오는 중…");
@@ -53,6 +69,11 @@ function App() {
   useEffect(() => {
     void (async () => {
       try {
+        if (isTestMode) {
+          setUsage(sampleUsage);
+          setStatus("TEST MODE · Sample data · network disabled");
+          return;
+        }
         if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
           const store = await Store.load("settings.json");
           const key = (await store.get<string>("tokenglass_openai_admin_key")) ?? "";
@@ -68,6 +89,7 @@ function App() {
   }, []);
 
   const saveSettings = async () => {
+    if (isTestMode) return;
     const store = await Store.load("settings.json");
     await store.set("tokenglass_openai_admin_key", adminKey.trim());
     await store.save();
@@ -76,6 +98,10 @@ function App() {
   };
 
   const refreshSubscription = async () => {
+    if (isTestMode) {
+      setSubscriptionStatus("TEST MODE에서는 ChatGPT OAuth를 사용하지 않습니다.");
+      return;
+    }
     setSubscriptionLoading(true);
     setSubscriptionStatus("ChatGPT 구독 사용량을 불러오는 중…");
     try {
@@ -91,6 +117,10 @@ function App() {
   };
 
   const connectChatGpt = async () => {
+    if (isTestMode) {
+      setSubscriptionStatus("TEST MODE에서는 ChatGPT OAuth를 사용하지 않습니다.");
+      return;
+    }
     setSubscriptionLoading(true);
     try {
       const login = await invoke<{ authUrl: string }>("start_chatgpt_login");
@@ -105,6 +135,22 @@ function App() {
 
   const maxTokens = useMemo(() => Math.max(...(usage?.models.map((model) => model.tokens) ?? [1]), 1), [usage]);
   const monthName = new Intl.DateTimeFormat(undefined, { month: "long" }).format(new Date());
+
+  const showDiagnostics = async () => {
+    try {
+      const runtime = await invoke<RuntimeDiagnostics>("get_runtime_diagnostics");
+      const storeState = isTestMode ? "not used in test mode" : "available";
+      setDiagnostics(redactDiagnosticText([
+        `TokenGlass ${runtime.appVersion}`,
+        `OS: ${runtime.operatingSystem}/${runtime.architecture}`,
+        `Mode: ${runtime.testMode ? "test" : "standard"}`,
+        `Codex sidecar: ${runtime.sidecarAvailable ? "available" : "missing"}; ${runtime.sidecarRunning ? "running" : "not started"}`,
+        `Settings store: ${storeState}`,
+      ].join("\n")));
+    } catch (error) {
+      setDiagnostics(redactDiagnosticText(`Diagnostics unavailable: ${String(error)}`));
+    }
+  };
 
   return (
     <main className="app-shell">
@@ -121,12 +167,20 @@ function App() {
         </div>
       </div>}
 
+      {diagnostics && <div className="modal-overlay">
+        <div className="glass-panel modal-content">
+          <div className="modal-header"><h3>진단 정보</h3><button className="icon-btn" onClick={() => setDiagnostics(null)}>✕</button></div>
+          <pre className="diagnostics-output">{diagnostics}</pre>
+          <div className="modal-footer"><button className="primary-btn" onClick={() => void navigator.clipboard?.writeText(diagnostics)}>복사</button></div>
+        </div>
+      </div>}
+
       <div className="glass-panel widget-container">
         <div className="widget-header">
-          <div className="widget-title">OpenAI Usage Dashboard</div>
-          <div className="header-actions"><button className="icon-btn" title="새로고침" disabled={loading || !adminKey} onClick={() => void refresh()}>↻</button><button className="icon-btn" title="연결 설정" onClick={() => setShowSettings(true)}>⚙</button></div>
+          <div className="widget-title">OpenAI Usage Dashboard {isTestMode && <span className="test-mode-badge">TEST MODE</span>}</div>
+          <div className="header-actions"><button className="icon-btn" title="새로고침" disabled={loading || (!adminKey && !isTestMode)} onClick={() => void refresh()}>↻</button><button className="icon-btn" title="진단 정보" onClick={() => void showDiagnostics()}>ⓘ</button><button className="icon-btn" title="연결 설정" disabled={isTestMode} onClick={() => setShowSettings(true)}>⚙</button></div>
         </div>
-        <div className="usage-source"><span className={usage ? "status-dot connected" : "status-dot"} /> API key usage {usage ? "connected" : "not connected"}</div>
+          <div className="usage-source"><span className={usage ? "status-dot connected" : "status-dot"} /> {isTestMode ? "Sample data · no network" : `API key usage ${usage ? "connected" : "not connected"}`}</div>
         <div className="total-section">
           <div className="section-caption">Current Month ({monthName})</div>
           <div className="total-cost">{usage ? `$${usage.totalBilled.toFixed(2)}` : "—"}</div>
@@ -144,7 +198,7 @@ function App() {
           {usage && <div className="token-summary"><span>Input {usage.inputTokens.toLocaleString()}</span><span>Output {usage.outputTokens.toLocaleString()}</span></div>}
         </div>
         <div className="subscription-card subscription-panel">
-          <div className="subscription-heading"><div><strong>ChatGPT/Codex subscription</strong><p>{subscription ? `${subscription.planType ?? "ChatGPT"} · ${subscription.email ?? "연결됨"}` : subscriptionStatus}</p></div><div className="subscription-actions"><button className="secondary-btn" disabled={subscriptionLoading} onClick={() => void connectChatGpt()}>ChatGPT 로그인</button><button className="secondary-btn" disabled={subscriptionLoading} onClick={() => void refreshSubscription()}>↻</button></div></div>
+          <div className="subscription-heading"><div><strong>ChatGPT/Codex subscription</strong><p>{subscription ? `${subscription.planType ?? "ChatGPT"} · ${subscription.email ?? "연결됨"}` : subscriptionStatus}</p></div><div className="subscription-actions"><button className="secondary-btn" disabled={subscriptionLoading || isTestMode} onClick={() => void connectChatGpt()}>ChatGPT 로그인</button><button className="secondary-btn" disabled={subscriptionLoading || isTestMode} onClick={() => void refreshSubscription()}>↻</button></div></div>
           {subscription?.limits.length ? <div className="limit-list">{subscription.limits.map((limit) => <div className="limit-row" key={limit.limitId}><div className="daily-info"><span>{limit.label || limit.limitId} {limit.windowDurationMins ? `(${limit.windowDurationMins}m)` : ""}</span><span>{limit.usedPercent?.toFixed(0) ?? "—"}%</span></div><div className="budget-bar"><div className="budget-fill" style={{ width: `${Math.min(limit.usedPercent ?? 0, 100)}%`, backgroundColor: "var(--color-accent)" }} /></div>{limit.resetsAt && <span className="reset-time">Resets {new Date(limit.resetsAt * 1000).toLocaleString()}</span>}</div>)}</div> : null}
           {subscription && <div className="token-summary"><span>Lifetime {subscription.lifetimeTokens?.toLocaleString() ?? "—"} tokens</span><span>Peak daily {subscription.peakDailyTokens?.toLocaleString() ?? "—"}</span></div>}
         </div>
