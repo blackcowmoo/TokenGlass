@@ -5,14 +5,14 @@ use std::{
     sync::{mpsc, Arc, Mutex},
     time::Duration,
 };
-use tauri_plugin_shell::{
-    process::{CommandChild, CommandEvent},
-    ShellExt,
-};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent, WebviewWindowBuilder, WebviewUrl
+    Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
+use tauri_plugin_shell::{
+    process::{CommandChild, CommandEvent},
+    ShellExt,
 };
 use tauri_plugin_store::StoreExt;
 
@@ -543,10 +543,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let quit_i = MenuItem::with_id(app, "quit", "종료 (Quit)", true, None::<&str>)?;
-            let toggle_widget_i = MenuItem::with_id(app, "toggle_widget", "위젯 켜기/끄기 (Toggle Widget)", true, None::<&str>)?;
+            let toggle_widget_i = MenuItem::with_id(
+                app,
+                "toggle_widget",
+                "위젯 켜기/끄기 (Toggle Widget)",
+                true,
+                None::<&str>,
+            )?;
             let menu = Menu::with_items(app, &[&toggle_widget_i, &quit_i])?;
 
-            let app_handle = app.handle().clone();
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
@@ -562,14 +567,18 @@ pub fn run() {
                                 let _ = store.save();
                             }
                         } else {
-                            let _ = WebviewWindowBuilder::new(app, "widget", WebviewUrl::App("/widget".into()))
-                                .title("Widget")
-                                .inner_size(200.0, 100.0)
-                                .transparent(true)
-                                .decorations(false)
-                                .always_on_top(true)
-                                .skip_taskbar(true)
-                                .build();
+                            let _ = WebviewWindowBuilder::new(
+                                app,
+                                "widget",
+                                WebviewUrl::App("/widget".into()),
+                            )
+                            .title("Widget")
+                            .inner_size(200.0, 100.0)
+                            // .transparent(true)
+                            .decorations(false)
+                            .always_on_top(true)
+                            .skip_taskbar(true)
+                            .build();
                             if let Ok(store) = app.store("settings.json") {
                                 store.set("tokenglass_show_widget", serde_json::json!(true));
                                 let _ = store.save();
@@ -590,14 +599,18 @@ pub fn run() {
                             if let Ok(Some(monitor)) = window.current_monitor() {
                                 let physical_size = monitor.size();
                                 let physical_position = monitor.position();
-                                
+
                                 if let Ok(window_size) = window.outer_size() {
-                                    let x = physical_position.x + physical_size.width as i32 - window_size.width as i32 - 20;
-                                    let y = physical_position.y + physical_size.height as i32 - window_size.height as i32 - 60;
+                                    let x = physical_position.x + physical_size.width as i32
+                                        - window_size.width as i32
+                                        - 20;
+                                    let y = physical_position.y + physical_size.height as i32
+                                        - window_size.height as i32
+                                        - 60;
                                     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
                                 }
                             }
-                            
+
                             let is_visible = window.is_visible().unwrap_or(false);
                             if is_visible {
                                 let _ = window.hide();
@@ -614,14 +627,18 @@ pub fn run() {
             if let Ok(store) = app.store("settings.json") {
                 if let Some(val) = store.get("tokenglass_show_widget") {
                     if val.as_bool().unwrap_or(false) {
-                        let _ = WebviewWindowBuilder::new(app, "widget", WebviewUrl::App("/widget".into()))
-                            .title("Widget")
-                            .inner_size(200.0, 100.0)
-                            .transparent(true)
-                            .decorations(false)
-                            .always_on_top(true)
-                            .skip_taskbar(true)
-                            .build();
+                        let _ = WebviewWindowBuilder::new(
+                            app,
+                            "widget",
+                            WebviewUrl::App("/widget".into()),
+                        )
+                        .title("Widget")
+                        .inner_size(200.0, 100.0)
+                        // .transparent(true)
+                        .decorations(false)
+                        .always_on_top(true)
+                        .skip_taskbar(true)
+                        .build();
                     }
                 }
             }
