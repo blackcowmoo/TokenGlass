@@ -1,220 +1,208 @@
-import { useState, useEffect } from "react";
-import { encodingForModel } from "js-tiktoken";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Store } from "@tauri-apps/plugin-store";
 import "./App.css";
+import { isTestMode, redactDiagnosticText, sampleUsage } from "./testSupport";
 
-// Mock Data for Dashboard
-const MOCK_USAGE_DATA = {
-  totalBilled: 12.45,
-  dailyBudget: 2.00,
-  todayUsage: 1.65,
-  models: [
-    { name: "GPT-4o", provider: "OpenAI", cost: 8.20, color: "#10A37F" },
-    { name: "Claude 3.5 Sonnet", provider: "Anthropic", cost: 3.15, color: "#D97757" },
-    { name: "Gemini 1.5 Pro", provider: "Google", cost: 1.10, color: "#4285F4" },
-  ]
+type Usage = {
+  totalBilled: number;
+  todayUsage: number;
+  inputTokens: number;
+  outputTokens: number;
+  models: { name: string; tokens: number }[];
+  periodStart: number;
+  periodEnd: number;
 };
 
-// Initialize secure store
-const store = new Store('settings.json');
+type SubscriptionUsage = {
+  email?: string;
+  planType?: string;
+  limits: { limitId: string; label?: string; usedPercent?: number; windowDurationMins?: number; resetsAt?: number }[];
+  lifetimeTokens?: number;
+  peakDailyTokens?: number;
+  dailyUsage: { startDate: string; tokens: number }[];
+};
+
+type RuntimeDiagnostics = {
+  appVersion: string;
+  operatingSystem: string;
+  architecture: string;
+  testMode: boolean;
+  sidecarAvailable: boolean;
+  sidecarRunning: boolean;
+};
+
+const colors = ["#10A37F", "#3B82F6", "#A855F7", "#F59E0B", "#EC4899"];
 
 function App() {
   const [showSettings, setShowSettings] = useState(false);
+  const [adminKey, setAdminKey] = useState("");
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [status, setStatus] = useState("OpenAI 조직 관리자 API 키를 연결하세요.");
+  const [loading, setLoading] = useState(false);
+  const [subscription, setSubscription] = useState<SubscriptionUsage | null>(null);
+  const [subscriptionStatus, setSubscriptionStatus] = useState("ChatGPT OAuth 로그인을 연결하세요.");
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<string | null>(null);
 
-  // Settings States
-  const [keys, setKeys] = useState({ openai: "", anthropic: "", google: "" });
-
-  // Clipboard Toast Mock State
-  const [showToast, setShowToast] = useState(false);
-  const [toastData, setToastData] = useState({ tokens: 0, cost: 0, model: "GPT-4o" });
-  const [inputText, setInputText] = useState("");
-
-  // Load API Keys from secure store on mount
-  useEffect(() => {
-    async function loadKeys() {
-      const openai = await store.get<string>("tokenglass_openai_key") || "";
-      const anthropic = await store.get<string>("tokenglass_anthropic_key") || "";
-      const google = await store.get<string>("tokenglass_google_key") || "";
-      setKeys({ openai, anthropic, google });
+  const refresh = async (key = adminKey) => {
+    if (isTestMode) {
+      setUsage(sampleUsage);
+      setStatus("TEST MODE · Sample data · network disabled");
+      return;
     }
-    loadKeys();
+    if (!key.trim()) return;
+    setLoading(true);
+    setStatus("OpenAI 사용량을 불러오는 중…");
+    try {
+      const result = await invoke<Usage>("fetch_openai_usage", { adminKey: key });
+      setUsage(result);
+      setStatus(`마지막 동기화: ${new Date().toLocaleTimeString()}`);
+    } catch (error) {
+      setUsage(null);
+      setStatus(String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        if (isTestMode) {
+          setUsage(sampleUsage);
+          setStatus("TEST MODE · Sample data · network disabled");
+          return;
+        }
+        if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+          const store = await Store.load("settings.json");
+          const key = (await store.get<string>("tokenglass_openai_admin_key")) ?? "";
+          setAdminKey(key);
+          if (key) await refresh(key);
+        } else {
+          console.warn("Tauri 환경이 아닙니다. 웹 브라우저 모드로 동작합니다.");
+        }
+      } catch (error) {
+        console.error("설정을 불러오는 중 오류가 발생했습니다:", error);
+      }
+    })();
   }, []);
 
   const saveSettings = async () => {
-    await store.set("tokenglass_openai_key", keys.openai);
-    await store.set("tokenglass_anthropic_key", keys.anthropic);
-    await store.set("tokenglass_google_key", keys.google);
-    await store.save(); // explicitly save to disk
+    if (isTestMode) return;
+    const store = await Store.load("settings.json");
+    await store.set("tokenglass_openai_admin_key", adminKey.trim());
+    await store.save();
     setShowSettings(false);
+    await refresh(adminKey);
   };
 
-  // Simulate clipboard event when typing in the test area
-  useEffect(() => {
-    if (!inputText) return;
-
-    try {
-      const enc = encodingForModel("gpt-4o");
-      const tokenCount = enc.encode(inputText).length;
-      const estimatedCost = (tokenCount / 1000000) * 5.00;
-
-      setToastData({ tokens: tokenCount, cost: estimatedCost, model: "GPT-4o" });
-      setShowToast(true);
-
-      // Auto-hide toast after 3 seconds
-      const timer = setTimeout(() => {
-        setShowToast(false);
-      }, 3000);
-      return () => clearTimeout(timer);
-    } catch (e) {
-      console.error(e);
+  const refreshSubscription = async () => {
+    if (isTestMode) {
+      setSubscriptionStatus("TEST MODE에서는 ChatGPT OAuth를 사용하지 않습니다.");
+      return;
     }
-  }, [inputText]);
+    setSubscriptionLoading(true);
+    setSubscriptionStatus("ChatGPT 구독 사용량을 불러오는 중…");
+    try {
+      const result = await invoke<SubscriptionUsage>("fetch_chatgpt_subscription_usage");
+      setSubscription(result);
+      setSubscriptionStatus(`마지막 동기화: ${new Date().toLocaleTimeString()}`);
+    } catch (error) {
+      setSubscription(null);
+      setSubscriptionStatus(String(error));
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  };
 
-  // Calculate max cost for the bar charts
-  const maxModelCost = Math.max(...MOCK_USAGE_DATA.models.map(m => m.cost));
+  const connectChatGpt = async () => {
+    if (isTestMode) {
+      setSubscriptionStatus("TEST MODE에서는 ChatGPT OAuth를 사용하지 않습니다.");
+      return;
+    }
+    setSubscriptionLoading(true);
+    try {
+      const login = await invoke<{ authUrl: string }>("start_chatgpt_login");
+      setSubscriptionStatus("브라우저에서 로그인을 완료한 후 ‘구독 사용량 새로고침’을 누르세요.");
+      window.open(login.authUrl, "_blank");
+    } catch (error) {
+      setSubscriptionStatus(String(error));
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  };
+
+  const maxTokens = useMemo(() => Math.max(...(usage?.models.map((model) => model.tokens) ?? [1]), 1), [usage]);
+  const monthName = new Intl.DateTimeFormat(undefined, { month: "long" }).format(new Date());
+
+  const showDiagnostics = async () => {
+    try {
+      const runtime = await invoke<RuntimeDiagnostics>("get_runtime_diagnostics");
+      const storeState = isTestMode ? "not used in test mode" : "available";
+      setDiagnostics(redactDiagnosticText([
+        `TokenGlass ${runtime.appVersion}`,
+        `OS: ${runtime.operatingSystem}/${runtime.architecture}`,
+        `Mode: ${runtime.testMode ? "test" : "standard"}`,
+        `Codex sidecar: ${runtime.sidecarAvailable ? "available" : "missing"}; ${runtime.sidecarRunning ? "running" : "not started"}`,
+        `Settings store: ${storeState}`,
+      ].join("\n")));
+    } catch (error) {
+      setDiagnostics(redactDiagnosticText(`Diagnostics unavailable: ${String(error)}`));
+    }
+  };
 
   return (
-    <main style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "32px", padding: "20px" }}>
-
-      {/* Settings Modal */}
-      {showSettings && (
-        <div className="modal-overlay">
-          <div className="glass-panel modal-content">
-            <div className="modal-header">
-              <h3>API Connections</h3>
-              <button className="icon-btn" onClick={() => setShowSettings(false)}>✕</button>
-            </div>
-            <div className="modal-body" style={{ gap: '16px', display: 'flex', flexDirection: 'column' }}>
-              <div>
-                <label>OpenAI API Key</label>
-                <input
-                  type="password" className="test-textarea glass-panel" style={{ height: "36px", padding: "8px", marginTop: "4px" }}
-                  placeholder="sk-..." value={keys.openai} onChange={(e) => setKeys({ ...keys, openai: e.target.value })}
-                />
-              </div>
-              <div>
-                <label>Anthropic API Key</label>
-                <input
-                  type="password" className="test-textarea glass-panel" style={{ height: "36px", padding: "8px", marginTop: "4px" }}
-                  placeholder="sk-ant-..." value={keys.anthropic} onChange={(e) => setKeys({ ...keys, anthropic: e.target.value })}
-                />
-              </div>
-              <div>
-                <label>Google Gemini API Key</label>
-                <input
-                  type="password" className="test-textarea glass-panel" style={{ height: "36px", padding: "8px", marginTop: "4px" }}
-                  placeholder="AIzaSy..." value={keys.google} onChange={(e) => setKeys({ ...keys, google: e.target.value })}
-                />
-              </div>
-              <p className="help-text">Keys are stored securely in your local system keychain.</p>
-            </div>
-            <div className="modal-footer">
-              <button className="primary-btn" onClick={saveSettings}>Save Keys</button>
-            </div>
+    <main className="app-shell">
+      {showSettings && <div className="modal-overlay">
+        <div className="glass-panel modal-content">
+          <div className="modal-header"><h3>OpenAI 연결</h3><button className="icon-btn" onClick={() => setShowSettings(false)}>✕</button></div>
+          <div className="modal-body settings-body">
+            <label htmlFor="openai-admin-key">OpenAI 조직 관리자 API 키</label>
+            <input id="openai-admin-key" type="password" className="test-textarea glass-panel compact-input" placeholder="sk-admin-..." value={adminKey} onChange={(event) => setAdminKey(event.target.value)} />
+            <p className="help-text">Usage/Costs API는 일반 프로젝트 키가 아닌 조직 관리자 키가 필요합니다.</p>
+            <div className="subscription-note"><strong>ChatGPT/Codex 구독 OAuth</strong><br />OpenAI는 OAuth 로그인으로 Plus/Pro/Codex의 사용량 또는 남은 한도를 읽는 공개 API를 제공하지 않습니다. 구독과 API 과금은 별도입니다.</div>
           </div>
+          <div className="modal-footer"><button className="primary-btn" onClick={() => void saveSettings()}>저장 및 동기화</button></div>
         </div>
-      )}
+      </div>}
 
-      {/* Main Dashboard Widget (Always Visible) */}
-      <div className="glass-panel widget-container" style={{ width: "340px" }}>
+      {diagnostics && <div className="modal-overlay">
+        <div className="glass-panel modal-content">
+          <div className="modal-header"><h3>진단 정보</h3><button className="icon-btn" onClick={() => setDiagnostics(null)}>✕</button></div>
+          <pre className="diagnostics-output">{diagnostics}</pre>
+          <div className="modal-footer"><button className="primary-btn" onClick={() => void navigator.clipboard?.writeText(diagnostics)}>복사</button></div>
+        </div>
+      </div>}
 
-        {/* Header */}
+      <div className="glass-panel widget-container">
         <div className="widget-header">
-          <div className="widget-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <line x1="3" y1="9" x2="21" y2="9"></line>
-              <line x1="9" y1="21" x2="9" y2="9"></line>
-            </svg>
-            Usage Dashboard
-          </div>
-          <button className="icon-btn" onClick={() => setShowSettings(true)}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-          </button>
+          <div className="widget-title">OpenAI Usage Dashboard {isTestMode && <span className="test-mode-badge">TEST MODE</span>}</div>
+          <div className="header-actions"><button className="icon-btn" title="새로고침" disabled={loading || (!adminKey && !isTestMode)} onClick={() => void refresh()}>↻</button><button className="icon-btn" title="진단 정보" onClick={() => void showDiagnostics()}>ⓘ</button><button className="icon-btn" title="연결 설정" disabled={isTestMode} onClick={() => setShowSettings(true)}>⚙</button></div>
         </div>
-
-        {/* Total Billed Section */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', margin: '8px 0 16px 0' }}>
-          <div style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)', fontWeight: 500, marginBottom: '4px' }}>
-            Current Month (Oct)
-          </div>
-          <div style={{ fontSize: '2.5rem', fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1 }}>
-            ${MOCK_USAGE_DATA.totalBilled.toFixed(2)}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: 'rgba(255, 255, 255, 0.5)', marginTop: '6px' }}>
-            Resets in 11d 04h
-          </div>
+          <div className="usage-source"><span className={usage ? "status-dot connected" : "status-dot"} /> {isTestMode ? "Sample data · no network" : `API key usage ${usage ? "connected" : "not connected"}`}</div>
+        <div className="total-section">
+          <div className="section-caption">Current Month ({monthName})</div>
+          <div className="total-cost">{usage ? `$${usage.totalBilled.toFixed(2)}` : "—"}</div>
+          <div className="sync-status">{status}</div>
         </div>
-
-        {/* Model Breakdown Graphs */}
         <div className="models-breakdown">
-          <div style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--color-text-secondary)', marginBottom: '12px' }}>MODEL USAGE</div>
-
-          {MOCK_USAGE_DATA.models.map((model) => (
-            <div key={model.name} className="model-row">
-              <div className="model-info">
-                <span className="model-name">{model.name}</span>
-                <span className="model-cost">${model.cost.toFixed(2)}</span>
-              </div>
-              <div className="model-bar-bg">
-                <div
-                  className="model-bar-fill"
-                  style={{
-                    width: `${(model.cost / maxModelCost) * 100}%`,
-                    backgroundColor: model.color
-                  }}
-                ></div>
-              </div>
-            </div>
-          ))}
+          <div className="section-caption">TOKEN USAGE BY MODEL</div>
+          {usage?.models.length ? usage.models.slice(0, 5).map((model, index) => <div key={model.name} className="model-row">
+            <div className="model-info"><span className="model-name">{model.name}</span><span className="model-cost">{model.tokens.toLocaleString()} tokens</span></div>
+            <div className="model-bar-bg"><div className="model-bar-fill" style={{ width: `${(model.tokens / maxTokens) * 100}%`, backgroundColor: colors[index % colors.length] }} /></div>
+          </div>) : <div className="empty-state">연결 후 모델별 토큰 사용량이 표시됩니다.</div>}
         </div>
-
-        {/* Daily Progress */}
         <div className="daily-progress">
-          <div className="daily-info">
-            <span>Today's Spending</span>
-            <span>${MOCK_USAGE_DATA.todayUsage.toFixed(2)} / ${MOCK_USAGE_DATA.dailyBudget.toFixed(2)}</span>
-          </div>
-          <div className="budget-bar">
-            <div className="budget-fill" style={{ width: `${(MOCK_USAGE_DATA.todayUsage / MOCK_USAGE_DATA.dailyBudget) * 100}%`, backgroundColor: MOCK_USAGE_DATA.todayUsage > MOCK_USAGE_DATA.dailyBudget * 0.8 ? 'var(--color-warning)' : 'var(--color-accent)' }}></div>
-          </div>
+          <div className="daily-info"><span>Today’s API spending</span><span>{usage ? `$${usage.todayUsage.toFixed(2)}` : "—"}</span></div>
+          {usage && <div className="token-summary"><span>Input {usage.inputTokens.toLocaleString()}</span><span>Output {usage.outputTokens.toLocaleString()}</span></div>}
+        </div>
+        <div className="subscription-card subscription-panel">
+          <div className="subscription-heading"><div><strong>ChatGPT/Codex subscription</strong><p>{subscription ? `${subscription.planType ?? "ChatGPT"} · ${subscription.email ?? "연결됨"}` : subscriptionStatus}</p></div><div className="subscription-actions"><button className="secondary-btn" disabled={subscriptionLoading || isTestMode} onClick={() => void connectChatGpt()}>ChatGPT 로그인</button><button className="secondary-btn" disabled={subscriptionLoading || isTestMode} onClick={() => void refreshSubscription()}>↻</button></div></div>
+          {subscription?.limits.length ? <div className="limit-list">{subscription.limits.map((limit) => <div className="limit-row" key={limit.limitId}><div className="daily-info"><span>{limit.label || limit.limitId} {limit.windowDurationMins ? `(${limit.windowDurationMins}m)` : ""}</span><span>{limit.usedPercent?.toFixed(0) ?? "—"}%</span></div><div className="budget-bar"><div className="budget-fill" style={{ width: `${Math.min(limit.usedPercent ?? 0, 100)}%`, backgroundColor: "var(--color-accent)" }} /></div>{limit.resetsAt && <span className="reset-time">Resets {new Date(limit.resetsAt * 1000).toLocaleString()}</span>}</div>)}</div> : null}
+          {subscription && <div className="token-summary"><span>Lifetime {subscription.lifetimeTokens?.toLocaleString() ?? "—"} tokens</span><span>Peak daily {subscription.peakDailyTokens?.toLocaleString() ?? "—"}</span></div>}
         </div>
       </div>
-
-      {/* 
-        Mock Clipboard Toast Overlay
-        This simulates what happens when a user copies text elsewhere on their PC.
-      */}
-      {showToast && (
-        <div className="toast-overlay glass-panel">
-          <div className="toast-header">
-            <span className="toast-badge">{toastData.model}</span>
-            <span className="toast-title">Copied to clipboard</span>
-          </div>
-          <div className="toast-content">
-            <div className="toast-item">
-              <span className="toast-val">{toastData.tokens.toLocaleString()}</span>
-              <span className="toast-lbl">Tokens</span>
-            </div>
-            <div className="toast-item right">
-              <span className="toast-val cost">${toastData.cost.toFixed(5)}</span>
-              <span className="toast-lbl">Est. Cost</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Testing Area to trigger Toast */}
-      <div className="test-area" style={{ marginTop: '20px' }}>
-        <div className="test-area-header">Test: Type here to simulate copying text</div>
-        <textarea
-          className="test-textarea glass-panel"
-          placeholder="Typing here will trigger the Estimated Cost Toast popup..."
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-        />
-      </div>
-
     </main>
   );
 }

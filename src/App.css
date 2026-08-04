@@ -31,14 +31,25 @@ body {
   margin: 0;
   padding: 0;
   font-family: var(--font-family);
-  background-color: var(--color-bg);
+  background-color: transparent;
   color: var(--color-text-primary);
   user-select: none;
   -webkit-user-select: none;
-  overflow: auto;
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+.app-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box; }
+.widget-container { width: min(400px, 100%); }
+.header-actions { display: flex; gap: 4px; }
+.usage-source { display: flex; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--color-text-secondary); }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-secondary); }.status-dot.connected { background: var(--color-success); }
+.total-section { display: flex; flex-direction: column; align-items: center; margin: 4px 0; text-align: center; }.section-caption { font-size: var(--text-xs); color: var(--color-text-secondary); font-weight: 600; }.total-cost { font-size: 2.5rem; font-weight: 800; line-height: 1.15; }.sync-status { font-size: .7rem; color: rgba(255,255,255,.5); margin-top: 6px; max-width: 320px; }
+.empty-state { color: var(--color-text-secondary); font-size: var(--text-sm); }.token-summary { display: flex; justify-content: space-between; margin-top: 8px; color: var(--color-text-secondary); font-size: var(--text-xs); }
+.settings-body { display: flex; flex-direction: column; gap: 8px; }.compact-input { height: 38px; padding: 8px; }.help-text { color: var(--color-text-secondary); font-size: var(--text-xs); margin: 0; }.subscription-note { background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.25); border-radius: 8px; color: #fcd34d; padding: 10px; font-size: var(--text-xs); line-height: 1.5; }
+.subscription-card { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px; border-radius: 8px; background: rgba(0,0,0,.15); font-size: var(--text-xs); }.subscription-card p { margin: 4px 0 0; color: var(--color-text-secondary); }.unavailable { color: var(--color-warning); font-weight: 600; white-space: nowrap; }
+.subscription-panel { display: block; }.subscription-heading { display: flex; justify-content: space-between; gap: 8px; align-items: center; }.subscription-actions { display: flex; gap: 4px; }.secondary-btn { color: var(--color-text-primary); background: rgba(255,255,255,.08); border: 1px solid var(--color-glass-border); border-radius: 6px; padding: 6px 8px; font: inherit; cursor: pointer; white-space: nowrap; }.secondary-btn:hover { background: rgba(255,255,255,.14); }.secondary-btn:disabled { cursor: wait; opacity: .55; }.limit-list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }.limit-row { display: flex; flex-direction: column; gap: 4px; }.reset-time { color: var(--color-text-secondary); font-size: .67rem; }
 
 .glass-panel {
   background: var(--color-glass-bg);
@@ -71,6 +82,8 @@ body {
   align-items: center;
   gap: 6px;
 }
+.test-mode-badge { color: #fcd34d; font-size: .62rem; letter-spacing: .06em; }
+.diagnostics-output { margin: 0; padding: 12px; border-radius: 8px; background: rgba(0, 0, 0, .25); color: var(--color-text-secondary); font: .72rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; user-select: text; }
 
 .icon-btn {
   background: none;
@@ -320,4 +333,48 @@ body {
 
 .test-textarea:focus {
   border-color: rgba(59, 130, 246, 0.5);
+}
+
+/* Widget Styles */
+.widget-root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.widget-content {
+  background: var(--color-glass-bg);
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
+  border: 1px solid var(--color-glass-border);
+  border-radius: 16px;
+  padding: 12px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-shadow: var(--shadow-glass);
+  cursor: grab;
+}
+
+.widget-content:active {
+  cursor: grabbing;
+}
+
+.widget-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+}
+
+.widget-value {
+  font-size: var(--text-2xl);
+  font-weight: 800;
+  color: var(--color-success);
+  pointer-events: none;
 }

@@ -4,8 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "prepare:sidecar": "node scripts/prepare-codex-sidecar.mjs",
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "pnpm prepare:sidecar && tsc && vite build",
+    "build:windows-test": "node scripts/build-windows-test.mjs",
+    "smoke:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-windows-test.ps1",
+    "test:windows-support": "cargo test --manifest-path src-tauri/Cargo.toml diagnostics",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -15,7 +19,8 @@
     "@tauri-apps/plugin-store": "~2.4.4",
     "js-tiktoken": "^1.0.21",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

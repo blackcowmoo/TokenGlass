@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.mykim.tokenglass",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm prepare:sidecar && pnpm dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
@@ -12,9 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "tokenglass",
-        "width": 800,
-        "height": 600
+        "title": "TokenGlass",
+        "width": 400,
+        "height": 600,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "skipTaskbar": true
       }
     ],
     "security": {
@@ -23,6 +28,9 @@
   },
   "bundle": {
     "active": true,
+    "externalBin": [
+      "binaries/codex"
+    ],
     "targets": "all",
     "icon": [
       "icons/32x32.png",
