@@ -182,7 +182,7 @@ function App() {
         </div>
           <div className="usage-source"><span className={usage ? "status-dot connected" : "status-dot"} /> {isTestMode ? "Sample data · no network" : `API key usage ${usage ? "connected" : "not connected"}`}</div>
         <div className="total-section">
-          <div className="section-caption">Current Month ({monthName})</div>
+          <div className="section-caption" title="시스템 로컬 시간대 기준 당월 지출액">Current Month ({monthName})</div>
           <div className="total-cost">{usage ? `$${usage.totalBilled.toFixed(2)}` : "—"}</div>
           <div className="sync-status">{status}</div>
         </div>
@@ -194,7 +194,7 @@ function App() {
           </div>) : <div className="empty-state">연결 후 모델별 토큰 사용량이 표시됩니다.</div>}
         </div>
         <div className="daily-progress">
-          <div className="daily-info"><span>Today’s API spending</span><span>{usage ? `$${usage.todayUsage.toFixed(2)}` : "—"}</span></div>
+          <div className="daily-info"><span title="시스템 로컬 시간대 자정(00:00) 기준 오늘 지출액">Today’s API spending (Local)</span><span>{usage ? `$${usage.todayUsage.toFixed(2)}` : "—"}</span></div>
           {usage && <div className="token-summary"><span>Input {usage.inputTokens.toLocaleString()}</span><span>Output {usage.outputTokens.toLocaleString()}</span></div>}
         </div>
         <div className="subscription-card subscription-panel">

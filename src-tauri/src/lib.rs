@@ -367,6 +367,39 @@ fn api_error(response: reqwest::Response) -> impl std::future::Future<Output = S
     }
 }
 
+fn calculate_bounds_with_offset(now: i64, offset: time::UtcOffset) -> (i64, i64) {
+    let local_now = time::OffsetDateTime::from_unix_timestamp(now)
+        .map(|dt| dt.to_offset(offset))
+        .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+
+    let period_start = time::Date::from_calendar_date(local_now.year(), local_now.month(), 1)
+        .map(|date| date.with_time(time::Time::MIDNIGHT).assume_offset(offset).unix_timestamp())
+        .unwrap_or_else(|_| {
+            let utc_now = time::OffsetDateTime::from_unix_timestamp(now)
+                .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+            time::Date::from_calendar_date(utc_now.year(), utc_now.month(), 1)
+                .map(|date| date.with_time(time::Time::MIDNIGHT).assume_utc().unix_timestamp())
+                .unwrap_or(now - 30 * 86400)
+        });
+
+    let today_start = time::Date::from_calendar_date(local_now.year(), local_now.month(), local_now.day())
+        .map(|date| date.with_time(time::Time::MIDNIGHT).assume_offset(offset).unix_timestamp())
+        .unwrap_or_else(|_| {
+            let utc_now = time::OffsetDateTime::from_unix_timestamp(now)
+                .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+            time::Date::from_calendar_date(utc_now.year(), utc_now.month(), utc_now.day())
+                .map(|date| date.with_time(time::Time::MIDNIGHT).assume_utc().unix_timestamp())
+                .unwrap_or(now - 86400)
+        });
+
+    (period_start, today_start)
+}
+
+fn calculate_period_and_today_bounds(now: i64) -> (i64, i64) {
+    let local_offset = time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC);
+    calculate_bounds_with_offset(now, local_offset)
+}
+
 #[tauri::command]
 async fn fetch_openai_usage(admin_key: String) -> Result<OpenAiUsage, String> {
     if admin_key.trim().is_empty() {
@@ -377,19 +410,7 @@ async fn fetch_openai_usage(admin_key: String) -> Result<OpenAiUsage, String> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|_| "현재 시간을 확인할 수 없습니다.".to_string())?
         .as_secs() as i64;
-    let utc_now = time::OffsetDateTime::from_unix_timestamp(now)
-        .map_err(|_| "현재 시간을 변환할 수 없습니다.".to_string())?;
-    let period_start = time::Date::from_calendar_date(utc_now.year(), utc_now.month(), 1)
-        .map_err(|_| "이번 달 시작일을 계산할 수 없습니다.".to_string())?
-        .with_time(time::Time::MIDNIGHT)
-        .assume_utc()
-        .unix_timestamp();
-    let today_start =
-        time::Date::from_calendar_date(utc_now.year(), utc_now.month(), utc_now.day())
-            .map_err(|_| "오늘 시작일을 계산할 수 없습니다.".to_string())?
-            .with_time(time::Time::MIDNIGHT)
-            .assume_utc()
-            .unix_timestamp();
+    let (period_start, today_start) = calculate_period_and_today_bounds(now);
 
     let client = reqwest::Client::new();
     let usage_response = client
@@ -474,11 +495,9 @@ async fn fetch_openai_usage(admin_key: String) -> Result<OpenAiUsage, String> {
         .into_iter()
         .flatten()
     {
-        let is_today = bucket
-            .get("start_time")
-            .and_then(Value::as_i64)
-            .unwrap_or(0)
-            >= today_start;
+        let start_time = bucket.get("start_time").and_then(Value::as_i64).unwrap_or(0);
+        let end_time = bucket.get("end_time").and_then(Value::as_i64).unwrap_or(start_time + 86400);
+        let is_today = start_time >= today_start || end_time > today_start;
         for result in bucket
             .get("results")
             .and_then(Value::as_array)
@@ -675,4 +694,20 @@ mod diagnostics_tests {
         assert!(!sanitized.contains("oauth-secret"));
         assert!(sanitized.contains("[redacted]"));
     }
+
+    #[test]
+    fn timezone_bounds_calculation_respects_offset() {
+        use super::calculate_bounds_with_offset;
+        // 2026-08-12 16:00:00 UTC (1786550400)
+        // In KST (UTC+9), this is 2026-08-13 01:00:00 KST
+        let now_kst = 1786550400_i64;
+        let kst_offset = time::UtcOffset::from_hms(9, 0, 0).unwrap();
+        let (period_start, today_start) = calculate_bounds_with_offset(now_kst, kst_offset);
+
+        // KST today start (2026-08-13 00:00:00 KST) = 2026-08-12 15:00:00 UTC = 1786546800
+        assert_eq!(today_start, 1786546800);
+        // KST period start (2026-08-01 00:00:00 KST) = 2026-07-31 15:00:00 UTC = 1785510000
+        assert_eq!(period_start, 1785510000);
+    }
 }
+
