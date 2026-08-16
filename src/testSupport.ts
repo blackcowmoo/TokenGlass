@@ -17,5 +17,8 @@ export function redactDiagnosticText(value: string): string {
   return value
     .replace(/\bsk-[A-Za-z0-9_-]+/g, "[redacted]")
     .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [redacted]")
-    .replace(/(access[_-]?token|refresh[_-]?token|authorization)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]");
+    .replace(
+      /(access[_-]?token|refresh[_-]?token|authorization)\s*[:=]\s*[^\s,;]+/gi,
+      "$1=[redacted]",
+    );
 }

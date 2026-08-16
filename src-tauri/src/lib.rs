@@ -1,5 +1,6 @@
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     sync::{mpsc, Arc, Mutex},
@@ -15,8 +16,10 @@ use tauri_plugin_shell::{
     ShellExt,
 };
 use tauri_plugin_store::StoreExt;
+use tokio::sync::Mutex as AsyncMutex;
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1/organization";
+const OPENAI_USAGE_CACHE_TTL_SECONDS: i64 = 5 * 60;
 
 struct RunningAppServer {
     _child: CommandChild,
@@ -47,7 +50,9 @@ fn sanitize_diagnostic_text(value: &str) -> String {
         while let Some(start) = redacted.find(prefix) {
             let suffix = &redacted[start + prefix.len()..];
             let end = suffix
-                .find(|character: char| character.is_whitespace() || matches!(character, ',' | ';' | '"'))
+                .find(|character: char| {
+                    character.is_whitespace() || matches!(character, ',' | ';' | '"')
+                })
                 .unwrap_or(suffix.len());
             redacted.replace_range(start..start + prefix.len() + end, "[redacted]");
         }
@@ -331,14 +336,14 @@ fn fetch_chatgpt_subscription_usage(
     })
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ModelUsage {
     name: String,
     tokens: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenAiUsage {
     total_billed: f64,
@@ -348,6 +353,86 @@ struct OpenAiUsage {
     models: Vec<ModelUsage>,
     period_start: i64,
     period_end: i64,
+}
+
+#[derive(Clone)]
+struct CachedOpenAiUsage {
+    key_fingerprint: String,
+    usage: OpenAiUsage,
+    fetched_at: i64,
+    generation: u64,
+}
+
+#[derive(Default)]
+struct OpenAiUsageState {
+    cache: AsyncMutex<Option<CachedOpenAiUsage>>,
+    refresh_gate: AsyncMutex<()>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenAiUsageSnapshot {
+    usage: OpenAiUsage,
+    fetched_at: i64,
+    source: String,
+    stale: bool,
+    refresh_error: Option<String>,
+}
+
+fn openai_key_fingerprint(admin_key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(admin_key.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn current_unix_timestamp() -> Result<i64, String> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "현재 시간을 확인할 수 없습니다.".to_string())
+        .map(|duration| duration.as_secs() as i64)
+}
+
+fn cache_is_fresh(entry: &CachedOpenAiUsage, now: i64) -> bool {
+    now.saturating_sub(entry.fetched_at) < OPENAI_USAGE_CACHE_TTL_SECONDS
+}
+
+fn cache_matches_key(entry: &CachedOpenAiUsage, key_fingerprint: &str) -> bool {
+    entry.key_fingerprint == key_fingerprint
+}
+
+fn should_return_fresh_cache(
+    entry: &CachedOpenAiUsage,
+    key_fingerprint: &str,
+    force_refresh: bool,
+    now: i64,
+) -> bool {
+    cache_matches_key(entry, key_fingerprint) && !force_refresh && cache_is_fresh(entry, now)
+}
+
+fn refresh_completed_while_waiting(
+    entry: &CachedOpenAiUsage,
+    key_fingerprint: &str,
+    observed_generation: Option<u64>,
+) -> bool {
+    cache_matches_key(entry, key_fingerprint)
+        && observed_generation
+            .map(|generation| entry.generation > generation)
+            .unwrap_or(false)
+}
+
+fn usage_snapshot(
+    entry: &CachedOpenAiUsage,
+    source: &str,
+    stale: bool,
+    refresh_error: Option<String>,
+) -> OpenAiUsageSnapshot {
+    OpenAiUsageSnapshot {
+        usage: entry.usage.clone(),
+        fetched_at: entry.fetched_at,
+        source: source.to_string(),
+        stale,
+        refresh_error,
+    }
 }
 
 fn api_error(response: reqwest::Response) -> impl std::future::Future<Output = String> {
@@ -373,24 +458,41 @@ fn calculate_bounds_with_offset(now: i64, offset: time::UtcOffset) -> (i64, i64)
         .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
 
     let period_start = time::Date::from_calendar_date(local_now.year(), local_now.month(), 1)
-        .map(|date| date.with_time(time::Time::MIDNIGHT).assume_offset(offset).unix_timestamp())
+        .map(|date| {
+            date.with_time(time::Time::MIDNIGHT)
+                .assume_offset(offset)
+                .unix_timestamp()
+        })
         .unwrap_or_else(|_| {
             let utc_now = time::OffsetDateTime::from_unix_timestamp(now)
                 .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
             time::Date::from_calendar_date(utc_now.year(), utc_now.month(), 1)
-                .map(|date| date.with_time(time::Time::MIDNIGHT).assume_utc().unix_timestamp())
+                .map(|date| {
+                    date.with_time(time::Time::MIDNIGHT)
+                        .assume_utc()
+                        .unix_timestamp()
+                })
                 .unwrap_or(now - 30 * 86400)
         });
 
-    let today_start = time::Date::from_calendar_date(local_now.year(), local_now.month(), local_now.day())
-        .map(|date| date.with_time(time::Time::MIDNIGHT).assume_offset(offset).unix_timestamp())
-        .unwrap_or_else(|_| {
-            let utc_now = time::OffsetDateTime::from_unix_timestamp(now)
-                .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
-            time::Date::from_calendar_date(utc_now.year(), utc_now.month(), utc_now.day())
-                .map(|date| date.with_time(time::Time::MIDNIGHT).assume_utc().unix_timestamp())
-                .unwrap_or(now - 86400)
-        });
+    let today_start =
+        time::Date::from_calendar_date(local_now.year(), local_now.month(), local_now.day())
+            .map(|date| {
+                date.with_time(time::Time::MIDNIGHT)
+                    .assume_offset(offset)
+                    .unix_timestamp()
+            })
+            .unwrap_or_else(|_| {
+                let utc_now = time::OffsetDateTime::from_unix_timestamp(now)
+                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+                time::Date::from_calendar_date(utc_now.year(), utc_now.month(), utc_now.day())
+                    .map(|date| {
+                        date.with_time(time::Time::MIDNIGHT)
+                            .assume_utc()
+                            .unix_timestamp()
+                    })
+                    .unwrap_or(now - 86400)
+            });
 
     (period_start, today_start)
 }
@@ -400,16 +502,12 @@ fn calculate_period_and_today_bounds(now: i64) -> (i64, i64) {
     calculate_bounds_with_offset(now, local_offset)
 }
 
-#[tauri::command]
-async fn fetch_openai_usage(admin_key: String) -> Result<OpenAiUsage, String> {
+async fn fetch_openai_usage_from_api(admin_key: &str) -> Result<OpenAiUsage, String> {
     if admin_key.trim().is_empty() {
         return Err("OpenAI 조직 관리자 API 키를 입력하세요.".to_string());
     }
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| "현재 시간을 확인할 수 없습니다.".to_string())?
-        .as_secs() as i64;
+    let now = current_unix_timestamp()?;
     let (period_start, today_start) = calculate_period_and_today_bounds(now);
 
     let client = reqwest::Client::new();
@@ -495,8 +593,14 @@ async fn fetch_openai_usage(admin_key: String) -> Result<OpenAiUsage, String> {
         .into_iter()
         .flatten()
     {
-        let start_time = bucket.get("start_time").and_then(Value::as_i64).unwrap_or(0);
-        let end_time = bucket.get("end_time").and_then(Value::as_i64).unwrap_or(start_time + 86400);
+        let start_time = bucket
+            .get("start_time")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let end_time = bucket
+            .get("end_time")
+            .and_then(Value::as_i64)
+            .unwrap_or(start_time + 86400);
         let is_today = start_time >= today_start || end_time > today_start;
         for result in bucket
             .get("results")
@@ -533,6 +637,80 @@ async fn fetch_openai_usage(admin_key: String) -> Result<OpenAiUsage, String> {
 }
 
 #[tauri::command]
+async fn fetch_openai_usage(
+    admin_key: String,
+    force_refresh: Option<bool>,
+    usage_state: tauri::State<'_, OpenAiUsageState>,
+) -> Result<OpenAiUsageSnapshot, String> {
+    let admin_key = admin_key.trim();
+    if admin_key.is_empty() {
+        return Err("OpenAI 조직 관리자 API 키를 입력하세요.".to_string());
+    }
+
+    let key_fingerprint = openai_key_fingerprint(admin_key);
+    let force_refresh = force_refresh.unwrap_or(false);
+    let now = current_unix_timestamp()?;
+    let observed_generation = {
+        let cache = usage_state.cache.lock().await;
+        match cache.as_ref() {
+            Some(entry) if cache_matches_key(entry, &key_fingerprint) => {
+                if should_return_fresh_cache(entry, &key_fingerprint, force_refresh, now) {
+                    return Ok(usage_snapshot(entry, "cache", false, None));
+                }
+                Some(entry.generation)
+            }
+            _ => None,
+        }
+    };
+
+    let _refresh_guard = usage_state.refresh_gate.lock().await;
+    let now = current_unix_timestamp()?;
+    {
+        let cache = usage_state.cache.lock().await;
+        if let Some(entry) = cache.as_ref() {
+            let refreshed_while_waiting =
+                refresh_completed_while_waiting(entry, &key_fingerprint, observed_generation);
+            if should_return_fresh_cache(entry, &key_fingerprint, force_refresh, now)
+                || refreshed_while_waiting
+            {
+                return Ok(usage_snapshot(entry, "cache", false, None));
+            }
+        }
+    }
+
+    match fetch_openai_usage_from_api(admin_key).await {
+        Ok(usage) => {
+            let fetched_at = current_unix_timestamp()?;
+            let mut cache = usage_state.cache.lock().await;
+            let generation = cache
+                .as_ref()
+                .map(|entry| entry.generation.saturating_add(1))
+                .unwrap_or(1);
+            let entry = CachedOpenAiUsage {
+                key_fingerprint,
+                usage,
+                fetched_at,
+                generation,
+            };
+            let snapshot = usage_snapshot(&entry, "network", false, None);
+            *cache = Some(entry);
+            Ok(snapshot)
+        }
+        Err(error) => {
+            let cache = usage_state.cache.lock().await;
+            if let Some(entry) = cache
+                .as_ref()
+                .filter(|entry| cache_matches_key(entry, &key_fingerprint))
+            {
+                Ok(usage_snapshot(entry, "cache", true, Some(error)))
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+#[tauri::command]
 fn get_runtime_diagnostics(
     app: tauri::AppHandle,
     app_server: tauri::State<'_, CodexAppServer>,
@@ -557,6 +735,7 @@ fn get_runtime_diagnostics(
 pub fn run() {
     tauri::Builder::default()
         .manage(CodexAppServer::default())
+        .manage(OpenAiUsageState::default())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
@@ -684,12 +863,40 @@ pub fn run() {
 
 #[cfg(test)]
 mod diagnostics_tests {
-    use super::sanitize_diagnostic_text;
+    use super::{
+        cache_is_fresh, cache_matches_key, openai_key_fingerprint, refresh_completed_while_waiting,
+        should_return_fresh_cache, usage_snapshot, CachedOpenAiUsage, ModelUsage, OpenAiUsage,
+        OpenAiUsageState, OPENAI_USAGE_CACHE_TTL_SECONDS,
+    };
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    fn cached_usage(key: &str, fetched_at: i64, generation: u64) -> CachedOpenAiUsage {
+        CachedOpenAiUsage {
+            key_fingerprint: openai_key_fingerprint(key),
+            usage: OpenAiUsage {
+                total_billed: 1.25,
+                today_usage: 0.5,
+                input_tokens: 10,
+                output_tokens: 20,
+                models: vec![ModelUsage {
+                    name: "gpt-test".to_string(),
+                    tokens: 30,
+                }],
+                period_start: 100,
+                period_end: 200,
+            },
+            fetched_at,
+            generation,
+        }
+    }
 
     #[test]
     fn diagnostics_redact_api_keys_and_bearer_tokens() {
         let value = "key sk-admin-secret-value Authorization: Bearer oauth-secret";
-        let sanitized = sanitize_diagnostic_text(value);
+        let sanitized = super::sanitize_diagnostic_text(value);
         assert!(!sanitized.contains("secret-value"));
         assert!(!sanitized.contains("oauth-secret"));
         assert!(sanitized.contains("[redacted]"));
@@ -709,5 +916,89 @@ mod diagnostics_tests {
         // KST period start (2026-08-01 00:00:00 KST) = 2026-07-31 15:00:00 UTC = 1785510000
         assert_eq!(period_start, 1785510000);
     }
-}
 
+    #[test]
+    fn cache_respects_ttl_force_refresh_and_key_isolation() {
+        let key = "sk-admin-one";
+        let entry = cached_usage(key, 1_000, 7);
+        let fingerprint = openai_key_fingerprint(key);
+
+        assert!(cache_is_fresh(
+            &entry,
+            1_000 + OPENAI_USAGE_CACHE_TTL_SECONDS - 1
+        ));
+        assert!(!cache_is_fresh(
+            &entry,
+            1_000 + OPENAI_USAGE_CACHE_TTL_SECONDS
+        ));
+        assert!(should_return_fresh_cache(
+            &entry,
+            &fingerprint,
+            false,
+            1_001
+        ));
+        assert!(!should_return_fresh_cache(
+            &entry,
+            &fingerprint,
+            true,
+            1_001
+        ));
+        assert!(!cache_matches_key(
+            &entry,
+            &openai_key_fingerprint("sk-admin-two")
+        ));
+    }
+
+    #[test]
+    fn stale_snapshot_keeps_last_successful_data() {
+        let entry = cached_usage("sk-admin-one", 1_000, 7);
+        let snapshot = usage_snapshot(
+            &entry,
+            "cache",
+            true,
+            Some("network unavailable".to_string()),
+        );
+
+        assert!(snapshot.stale);
+        assert_eq!(snapshot.fetched_at, 1_000);
+        assert_eq!(snapshot.usage.total_billed, 1.25);
+        assert_eq!(
+            snapshot.refresh_error.as_deref(),
+            Some("network unavailable")
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_requests_reuse_one_completed_refresh_generation() {
+        let state = Arc::new(OpenAiUsageState::default());
+        let key = "sk-admin-one";
+        let fingerprint = openai_key_fingerprint(key);
+        {
+            let mut cache = state.cache.lock().await;
+            *cache = Some(cached_usage(key, 1_000, 1));
+        }
+
+        let refresh_count = Arc::new(AtomicUsize::new(0));
+        let refresh_gate = state.refresh_gate.lock().await;
+        refresh_count.fetch_add(1, Ordering::SeqCst);
+        {
+            let mut cache = state.cache.lock().await;
+            *cache = Some(cached_usage(key, 1_500, 2));
+        }
+
+        let waiting_state = Arc::clone(&state);
+        let waiting_fingerprint = fingerprint.clone();
+        let waiting_request = tokio::spawn(async move {
+            let _gate = waiting_state.refresh_gate.lock().await;
+            let cache = waiting_state.cache.lock().await;
+            let entry = cache.as_ref().expect("refresh should populate the cache");
+            refresh_completed_while_waiting(entry, &waiting_fingerprint, Some(1))
+        });
+
+        drop(refresh_gate);
+        assert!(waiting_request
+            .await
+            .expect("waiting request should complete"));
+        assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
+    }
+}

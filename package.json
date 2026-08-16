@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "prepare:sidecar": "node scripts/prepare-codex-sidecar.mjs",
+    "format": "biome format --write . && cargo fmt --manifest-path src-tauri/Cargo.toml",
+    "format:check": "biome format . && cargo fmt --check --manifest-path src-tauri/Cargo.toml",
     "dev": "vite",
     "build": "pnpm prepare:sidecar && tsc && vite build",
     "build:windows-test": "node scripts/build-windows-test.mjs",
@@ -23,6 +25,7 @@
     "react-router-dom": "^7.18.1"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.8",
     "@tauri-apps/cli": "^2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",

@@ -20,4 +20,3 @@ const targetSidecar = resolve("src-tauri", "target", "release", "codex-x86_64-pc
 if (existsSync(sourceSidecar)) {
   copyFileSync(sourceSidecar, targetSidecar);
 }
-

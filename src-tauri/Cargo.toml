@@ -26,3 +26,5 @@ tauri-plugin-store = "2"
 tauri-plugin-shell = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 time = { version = "0.3", features = ["local-offset"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["sync"] }
