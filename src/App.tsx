@@ -4,8 +4,13 @@ import { Store } from "@tauri-apps/plugin-store";
 import "./App.css";
 import { isTestMode, redactDiagnosticText, sampleUsage } from "./testSupport";
 import {
+  formatExchangeRate,
   formatLastSuccess,
+  formatKrwReference,
+  formatOriginalCost,
   USAGE_REFRESH_INTERVAL_MS,
+  usdToKrwRate,
+  validUsdToKrwRate,
   type Usage,
   type UsageSnapshot,
 } from "./usage";
@@ -39,6 +44,9 @@ const colors = ["#10A37F", "#3B82F6", "#A855F7", "#F59E0B", "#EC4899"];
 function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [adminKey, setAdminKey] = useState("");
+  const [exchangeRate, setExchangeRate] = useState(usdToKrwRate(undefined));
+  const [exchangeRateInput, setExchangeRateInput] = useState(String(usdToKrwRate(undefined)));
+  const [exchangeRateError, setExchangeRateError] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [status, setStatus] = useState("OpenAI 조직 관리자 API 키를 연결하세요.");
   const [loading, setLoading] = useState(false);
@@ -100,7 +108,11 @@ function App() {
         if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
           const store = await Store.load("settings.json");
           const key = (await store.get<string>("tokenglass_openai_admin_key")) ?? "";
+          const savedExchangeRate = await store.get<unknown>("tokenglass_usd_to_krw_rate");
+          const nextExchangeRate = usdToKrwRate(savedExchangeRate);
           setAdminKey(key);
+          setExchangeRate(nextExchangeRate);
+          setExchangeRateInput(String(nextExchangeRate));
           adminKeyRef.current = key;
           if (key) await refresh(key);
         } else {
@@ -126,11 +138,20 @@ function App() {
   const saveSettings = async () => {
     if (isTestMode) return;
     const nextKey = adminKey.trim();
+    const nextExchangeRate = validUsdToKrwRate(exchangeRateInput);
+    if (nextExchangeRate === null) {
+      setExchangeRateError("환율은 0보다 큰 숫자로 입력하세요.");
+      return;
+    }
     const keyChanged = nextKey !== adminKeyRef.current;
     const store = await Store.load("settings.json");
     await store.set("tokenglass_openai_admin_key", nextKey);
+    await store.set("tokenglass_usd_to_krw_rate", nextExchangeRate);
     await store.save();
     adminKeyRef.current = nextKey;
+    setExchangeRate(nextExchangeRate);
+    setExchangeRateInput(String(nextExchangeRate));
+    setExchangeRateError(null);
     setShowSettings(false);
     if (keyChanged) {
       usageRef.current = null;
@@ -226,6 +247,21 @@ function App() {
               <p className="help-text">
                 Usage/Costs API는 일반 프로젝트 키가 아닌 조직 관리자 키가 필요합니다.
               </p>
+              <label htmlFor="usd-to-krw-rate">수동 환율 (1 USD당 KRW)</label>
+              <input
+                id="usd-to-krw-rate"
+                type="number"
+                min="0"
+                step="0.01"
+                className="test-textarea glass-panel compact-input"
+                value={exchangeRateInput}
+                onChange={(event) => {
+                  setExchangeRateInput(event.target.value);
+                  setExchangeRateError(null);
+                }}
+              />
+              <p className="help-text">환율 API를 호출하지 않으며, KRW 금액은 참고용입니다.</p>
+              {exchangeRateError && <p className="settings-error">{exchangeRateError}</p>}
               <div className="subscription-note">
                 <strong>ChatGPT/Codex 구독 OAuth</strong>
                 <br />
@@ -306,7 +342,15 @@ function App() {
           <div className="section-caption" title="시스템 로컬 시간대 기준 당월 지출액">
             Current Month ({monthName})
           </div>
-          <div className="total-cost">{usage ? `$${usage.totalBilled.toFixed(2)}` : "—"}</div>
+          <div className="total-cost">
+            {usage ? formatOriginalCost(usage.totalBilled, usage.currency) : "—"}
+          </div>
+          {usage && formatKrwReference(usage.totalBilled, usage.currency, exchangeRate) && (
+            <div className="cost-reference">
+              {formatKrwReference(usage.totalBilled, usage.currency, exchangeRate)} ·{" "}
+              {formatExchangeRate(exchangeRate)}
+            </div>
+          )}
           <div className="sync-status">{status}</div>
         </div>
         <div className="models-breakdown">
@@ -338,8 +382,14 @@ function App() {
             <span title="시스템 로컬 시간대 자정(00:00) 기준 오늘 지출액">
               Today’s API spending (Local)
             </span>
-            <span>{usage ? `$${usage.todayUsage.toFixed(2)}` : "—"}</span>
+            <span>{usage ? formatOriginalCost(usage.todayUsage, usage.currency) : "—"}</span>
           </div>
+          {usage && formatKrwReference(usage.todayUsage, usage.currency, exchangeRate) && (
+            <div className="cost-reference daily-cost-reference">
+              {formatKrwReference(usage.todayUsage, usage.currency, exchangeRate)} ·{" "}
+              {formatExchangeRate(exchangeRate)}
+            </div>
+          )}
           {usage && (
             <div className="token-summary">
               <span>Input {usage.inputTokens.toLocaleString()}</span>

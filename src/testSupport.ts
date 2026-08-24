@@ -3,6 +3,7 @@ export const isTestMode = import.meta.env.VITE_TOKENGLASS_TEST_MODE === "true";
 export const sampleUsage = {
   totalBilled: 12.34,
   todayUsage: 0.56,
+  currency: "USD",
   inputTokens: 125_000,
   outputTokens: 32_000,
   models: [

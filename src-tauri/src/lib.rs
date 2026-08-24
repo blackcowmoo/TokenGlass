@@ -348,6 +348,7 @@ struct ModelUsage {
 struct OpenAiUsage {
     total_billed: f64,
     today_usage: f64,
+    currency: String,
     input_tokens: u64,
     output_tokens: u64,
     models: Vec<ModelUsage>,
@@ -587,6 +588,7 @@ async fn fetch_openai_usage_from_api(admin_key: &str) -> Result<OpenAiUsage, Str
 
     let mut total_billed = 0.0_f64;
     let mut today_usage = 0.0_f64;
+    let mut currency: Option<String> = None;
     for bucket in costs
         .get("data")
         .and_then(Value::as_array)
@@ -608,6 +610,21 @@ async fn fetch_openai_usage_from_api(admin_key: &str) -> Result<OpenAiUsage, Str
             .into_iter()
             .flatten()
         {
+            let result_currency = result
+                .pointer("/amount/currency")
+                .and_then(Value::as_str)
+                .unwrap_or("usd")
+                .to_ascii_uppercase();
+            if let Some(existing_currency) = &currency {
+                if existing_currency != &result_currency {
+                    return Err(
+                        "Costs API가 서로 다른 통화를 반환해 비용을 합산할 수 없습니다."
+                            .to_string(),
+                    );
+                }
+            } else {
+                currency = Some(result_currency);
+            }
             let amount = result
                 .pointer("/amount/value")
                 .and_then(Value::as_f64)
@@ -628,6 +645,7 @@ async fn fetch_openai_usage_from_api(admin_key: &str) -> Result<OpenAiUsage, Str
     Ok(OpenAiUsage {
         total_billed,
         today_usage,
+        currency: currency.unwrap_or_else(|| "USD".to_string()),
         input_tokens,
         output_tokens,
         models,
@@ -879,6 +897,7 @@ mod diagnostics_tests {
             usage: OpenAiUsage {
                 total_billed: 1.25,
                 today_usage: 0.5,
+                currency: "USD".to_string(),
                 input_tokens: 10,
                 output_tokens: 20,
                 models: vec![ModelUsage {

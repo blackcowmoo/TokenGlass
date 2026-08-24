@@ -88,6 +88,14 @@ body {
   font-weight: 800;
   line-height: 1.15;
 }
+.cost-reference {
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  margin-top: 2px;
+}
+.daily-cost-reference {
+  text-align: right;
+}
 .sync-status {
   font-size: 0.7rem;
   color: rgba(255, 255, 255, 0.5);
@@ -116,6 +124,11 @@ body {
 }
 .help-text {
   color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+.settings-error {
+  color: var(--color-danger);
   font-size: var(--text-xs);
   margin: 0;
 }
@@ -535,5 +548,10 @@ body {
   font-size: var(--text-2xl);
   font-weight: 800;
   color: var(--color-success);
+  pointer-events: none;
+}
+.widget-reference {
+  color: var(--color-text-secondary);
+  font-size: 0.65rem;
   pointer-events: none;
 }
