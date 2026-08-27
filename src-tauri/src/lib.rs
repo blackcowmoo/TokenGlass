@@ -2,7 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{mpsc, Arc, Mutex},
     time::Duration,
 };
@@ -20,6 +20,9 @@ use tokio::sync::Mutex as AsyncMutex;
 
 const OPENAI_API_BASE: &str = "https://api.openai.com/v1/organization";
 const OPENAI_USAGE_CACHE_TTL_SECONDS: i64 = 5 * 60;
+const OPENAI_USAGE_DAILY_PAGE_LIMIT: &str = "31";
+const OPENAI_COSTS_DAILY_PAGE_LIMIT: &str = "180";
+const MAX_OPENAI_PAGE_COUNT: usize = 10_000;
 
 struct RunningAppServer {
     _child: CommandChild,
@@ -503,135 +506,109 @@ fn calculate_period_and_today_bounds(now: i64) -> (i64, i64) {
     calculate_bounds_with_offset(now, local_offset)
 }
 
-async fn fetch_openai_usage_from_api(admin_key: &str) -> Result<OpenAiUsage, String> {
-    if admin_key.trim().is_empty() {
-        return Err("OpenAI 조직 관리자 API 키를 입력하세요.".to_string());
+fn next_page_cursor(
+    response: &Value,
+    endpoint: &str,
+    used_cursors: &mut HashSet<String>,
+) -> Result<Option<String>, String> {
+    let has_more = response
+        .get("has_more")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !has_more {
+        return Ok(None);
     }
 
-    let now = current_unix_timestamp()?;
-    let (period_start, today_start) = calculate_period_and_today_bounds(now);
-
-    let client = reqwest::Client::new();
-    let usage_response = client
-        .get(format!("{OPENAI_API_BASE}/usage/completions"))
-        .bearer_auth(admin_key.trim())
-        .query(&[
-            ("start_time", period_start.to_string()),
-            ("end_time", now.to_string()),
-            ("bucket_width", "1d".to_string()),
-            ("limit", "31".to_string()),
-            ("group_by", "model".to_string()),
-        ])
-        .send()
-        .await
-        .map_err(|error| format!("OpenAI에 연결할 수 없습니다: {error}"))?;
-    if !usage_response.status().is_success() {
-        return Err(api_error(usage_response).await);
+    let cursor = response
+        .get("next_page")
+        .and_then(Value::as_str)
+        .filter(|cursor| !cursor.is_empty())
+        .ok_or_else(|| format!("OpenAI {endpoint} 응답에 다음 페이지 커서가 없습니다."))?;
+    if !used_cursors.insert(cursor.to_string()) {
+        return Err(format!(
+            "OpenAI {endpoint} 응답이 다음 페이지 커서를 반복했습니다."
+        ));
     }
-    let usage: Value = usage_response
-        .json()
-        .await
-        .map_err(|error| format!("사용량 응답을 읽을 수 없습니다: {error}"))?;
 
-    let costs_response = client
-        .get(format!("{OPENAI_API_BASE}/costs"))
-        .bearer_auth(admin_key.trim())
-        .query(&[
-            ("start_time", period_start.to_string()),
-            ("end_time", now.to_string()),
-            ("bucket_width", "1d".to_string()),
-            ("limit", "31".to_string()),
-        ])
-        .send()
-        .await
-        .map_err(|error| format!("OpenAI에 연결할 수 없습니다: {error}"))?;
-    if !costs_response.status().is_success() {
-        return Err(api_error(costs_response).await);
-    }
-    let costs: Value = costs_response
-        .json()
-        .await
-        .map_err(|error| format!("비용 응답을 읽을 수 없습니다: {error}"))?;
+    Ok(Some(cursor.to_string()))
+}
 
-    let mut input_tokens = 0_u64;
-    let mut output_tokens = 0_u64;
-    let mut model_tokens = std::collections::BTreeMap::<String, u64>::new();
-    for bucket in usage
-        .get("data")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        for result in bucket
-            .get("results")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            let input = result
-                .get("input_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            let output = result
-                .get("output_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            input_tokens += input;
-            output_tokens += output;
-            let model = result
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or("Other");
-            *model_tokens.entry(model.to_string()).or_default() += input + output;
+async fn fetch_openai_pages(
+    client: &reqwest::Client,
+    endpoint: &str,
+    admin_key: &str,
+    query: &[(&str, String)],
+) -> Result<Vec<Value>, String> {
+    let mut pages = Vec::new();
+    let mut page_cursor: Option<String> = None;
+    let mut used_cursors = HashSet::new();
+
+    loop {
+        if pages.len() >= MAX_OPENAI_PAGE_COUNT {
+            return Err(format!(
+                "OpenAI {endpoint} 페이지 수가 허용 한도를 초과했습니다."
+            ));
+        }
+
+        let mut page_query = query.to_vec();
+        if let Some(cursor) = &page_cursor {
+            page_query.push(("page", cursor.clone()));
+        }
+        let response = client
+            .get(format!("{OPENAI_API_BASE}/{endpoint}"))
+            .bearer_auth(admin_key)
+            .query(&page_query)
+            .send()
+            .await
+            .map_err(|error| format!("OpenAI에 연결할 수 없습니다: {error}"))?;
+        if !response.status().is_success() {
+            return Err(api_error(response).await);
+        }
+        let page: Value = response
+            .json()
+            .await
+            .map_err(|error| format!("OpenAI {endpoint} 응답을 읽을 수 없습니다: {error}"))?;
+        page_cursor = next_page_cursor(&page, endpoint, &mut used_cursors)?;
+        pages.push(page);
+
+        if page_cursor.is_none() {
+            return Ok(pages);
         }
     }
+}
 
-    let mut total_billed = 0.0_f64;
-    let mut today_usage = 0.0_f64;
-    let mut currency: Option<String> = None;
-    for bucket in costs
-        .get("data")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        let start_time = bucket
-            .get("start_time")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
-        let end_time = bucket
-            .get("end_time")
-            .and_then(Value::as_i64)
-            .unwrap_or(start_time + 86400);
-        let is_today = start_time >= today_start || end_time > today_start;
-        for result in bucket
-            .get("results")
+fn aggregate_usage_pages(pages: &[Value]) -> (u64, u64, Vec<ModelUsage>) {
+    let mut input_tokens = 0_u64;
+    let mut output_tokens = 0_u64;
+    let mut model_tokens = BTreeMap::<String, u64>::new();
+    for page in pages {
+        for bucket in page
+            .get("data")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
         {
-            let result_currency = result
-                .pointer("/amount/currency")
-                .and_then(Value::as_str)
-                .unwrap_or("usd")
-                .to_ascii_uppercase();
-            if let Some(existing_currency) = &currency {
-                if existing_currency != &result_currency {
-                    return Err(
-                        "Costs API가 서로 다른 통화를 반환해 비용을 합산할 수 없습니다."
-                            .to_string(),
-                    );
-                }
-            } else {
-                currency = Some(result_currency);
-            }
-            let amount = result
-                .pointer("/amount/value")
-                .and_then(Value::as_f64)
-                .unwrap_or(0.0);
-            total_billed += amount;
-            if is_today {
-                today_usage += amount;
+            for result in bucket
+                .get("results")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let input = result
+                    .get("input_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let output = result
+                    .get("output_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                input_tokens += input;
+                output_tokens += output;
+                let model = result
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Other");
+                *model_tokens.entry(model.to_string()).or_default() += input + output;
             }
         }
     }
@@ -641,11 +618,110 @@ async fn fetch_openai_usage_from_api(admin_key: &str) -> Result<OpenAiUsage, Str
         .map(|(name, tokens)| ModelUsage { name, tokens })
         .collect();
     models.sort_by(|left, right| right.tokens.cmp(&left.tokens));
+    (input_tokens, output_tokens, models)
+}
+
+fn aggregate_cost_pages(pages: &[Value], today_start: i64) -> Result<(f64, f64, String), String> {
+    let mut total_billed = 0.0_f64;
+    let mut today_usage = 0.0_f64;
+    let mut currency: Option<String> = None;
+    for page in pages {
+        for bucket in page
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let start_time = bucket
+                .get("start_time")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            let end_time = bucket
+                .get("end_time")
+                .and_then(Value::as_i64)
+                .unwrap_or(start_time + 86400);
+            let is_today = start_time >= today_start || end_time > today_start;
+            for result in bucket
+                .get("results")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let result_currency = result
+                    .pointer("/amount/currency")
+                    .and_then(Value::as_str)
+                    .unwrap_or("usd")
+                    .to_ascii_uppercase();
+                if let Some(existing_currency) = &currency {
+                    if existing_currency != &result_currency {
+                        return Err(
+                            "Costs API가 서로 다른 통화를 반환해 비용을 합산할 수 없습니다."
+                                .to_string(),
+                        );
+                    }
+                } else {
+                    currency = Some(result_currency);
+                }
+                let amount = result
+                    .pointer("/amount/value")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                total_billed += amount;
+                if is_today {
+                    today_usage += amount;
+                }
+            }
+        }
+    }
+
+    Ok((
+        total_billed,
+        today_usage,
+        currency.unwrap_or_else(|| "USD".to_string()),
+    ))
+}
+
+async fn fetch_openai_usage_from_api(admin_key: &str) -> Result<OpenAiUsage, String> {
+    if admin_key.trim().is_empty() {
+        return Err("OpenAI 조직 관리자 API 키를 입력하세요.".to_string());
+    }
+
+    let now = current_unix_timestamp()?;
+    let (period_start, today_start) = calculate_period_and_today_bounds(now);
+
+    let client = reqwest::Client::new();
+    let usage_pages = fetch_openai_pages(
+        &client,
+        "usage/completions",
+        admin_key.trim(),
+        &[
+            ("start_time", period_start.to_string()),
+            ("end_time", now.to_string()),
+            ("bucket_width", "1d".to_string()),
+            ("limit", OPENAI_USAGE_DAILY_PAGE_LIMIT.to_string()),
+            ("group_by", "model".to_string()),
+        ],
+    )
+    .await?;
+    let costs_pages = fetch_openai_pages(
+        &client,
+        "costs",
+        admin_key.trim(),
+        &[
+            ("start_time", period_start.to_string()),
+            ("end_time", now.to_string()),
+            ("bucket_width", "1d".to_string()),
+            ("limit", OPENAI_COSTS_DAILY_PAGE_LIMIT.to_string()),
+        ],
+    )
+    .await?;
+    let (input_tokens, output_tokens, models) = aggregate_usage_pages(&usage_pages);
+    let (total_billed, today_usage, currency) = aggregate_cost_pages(&costs_pages, today_start)?;
 
     Ok(OpenAiUsage {
         total_billed,
         today_usage,
-        currency: currency.unwrap_or_else(|| "USD".to_string()),
+        currency,
         input_tokens,
         output_tokens,
         models,
@@ -882,10 +958,12 @@ pub fn run() {
 #[cfg(test)]
 mod diagnostics_tests {
     use super::{
-        cache_is_fresh, cache_matches_key, openai_key_fingerprint, refresh_completed_while_waiting,
+        aggregate_cost_pages, aggregate_usage_pages, cache_is_fresh, cache_matches_key,
+        next_page_cursor, openai_key_fingerprint, refresh_completed_while_waiting,
         should_return_fresh_cache, usage_snapshot, CachedOpenAiUsage, ModelUsage, OpenAiUsage,
         OpenAiUsageState, OPENAI_USAGE_CACHE_TTL_SECONDS,
     };
+    use serde_json::json;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -934,6 +1012,88 @@ mod diagnostics_tests {
         assert_eq!(today_start, 1786546800);
         // KST period start (2026-08-01 00:00:00 KST) = 2026-07-31 15:00:00 UTC = 1785510000
         assert_eq!(period_start, 1785510000);
+    }
+
+    #[test]
+    fn pagination_rejects_missing_and_repeated_continuation_cursors() {
+        let mut cursors = std::collections::HashSet::new();
+        let missing_cursor = json!({ "has_more": true });
+        assert!(next_page_cursor(&missing_cursor, "usage/completions", &mut cursors).is_err());
+
+        let first_page = json!({ "has_more": true, "next_page": "cursor-one" });
+        assert_eq!(
+            next_page_cursor(&first_page, "usage/completions", &mut cursors).unwrap(),
+            Some("cursor-one".to_string())
+        );
+        assert!(next_page_cursor(&first_page, "usage/completions", &mut cursors).is_err());
+    }
+
+    #[test]
+    fn aggregation_combines_every_page_and_preserves_cost_currency() {
+        let usage_pages = vec![
+            json!({
+                "data": [{
+                    "results": [{ "model": "gpt-test", "input_tokens": 10, "output_tokens": 5 }]
+                }]
+            }),
+            json!({
+                "data": [{
+                    "results": [
+                        { "model": "gpt-test", "input_tokens": 7, "output_tokens": 3 },
+                        { "model": "gpt-other", "input_tokens": 4, "output_tokens": 1 }
+                    ]
+                }]
+            }),
+        ];
+        let (input_tokens, output_tokens, models) = aggregate_usage_pages(&usage_pages);
+        assert_eq!((input_tokens, output_tokens), (21, 9));
+        assert_eq!(models[0].name, "gpt-test");
+        assert_eq!(models[0].tokens, 25);
+        assert_eq!(models[1].name, "gpt-other");
+        assert_eq!(models[1].tokens, 5);
+
+        let cost_pages = vec![
+            json!({
+                "data": [{
+                    "start_time": 100,
+                    "end_time": 200,
+                    "results": [{ "amount": { "value": 0.5, "currency": "usd" } }]
+                }]
+            }),
+            json!({
+                "data": [{
+                    "start_time": 200,
+                    "end_time": 300,
+                    "results": [{ "amount": { "value": 1.0, "currency": "usd" } }]
+                }]
+            }),
+        ];
+        let (total_billed, today_usage, currency) = aggregate_cost_pages(&cost_pages, 200).unwrap();
+        assert_eq!(
+            (total_billed, today_usage, currency.as_str()),
+            (1.5, 1.0, "USD")
+        );
+    }
+
+    #[test]
+    fn aggregation_rejects_currency_mismatch_across_pages() {
+        let cost_pages = vec![
+            json!({
+                "data": [{
+                    "start_time": 100,
+                    "end_time": 200,
+                    "results": [{ "amount": { "value": 0.5, "currency": "usd" } }]
+                }]
+            }),
+            json!({
+                "data": [{
+                    "start_time": 200,
+                    "end_time": 300,
+                    "results": [{ "amount": { "value": 1.0, "currency": "eur" } }]
+                }]
+            }),
+        ];
+        assert!(aggregate_cost_pages(&cost_pages, 200).is_err());
     }
 
     #[test]
