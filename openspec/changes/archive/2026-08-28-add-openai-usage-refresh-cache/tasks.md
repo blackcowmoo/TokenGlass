@@ -30,4 +30,4 @@
 - [x] 5.1 Add Rust tests for TTL boundaries, API-key fingerprint mismatch, force-refresh decisions, cache generation changes, and stale fallback behavior.
 - [x] 5.2 Add a concurrency-focused Rust test proving simultaneous requests for one API key result in one refresh generation.
 - [x] 5.3 Run Rust tests and the TypeScript/Vite production build, fixing all cache contract and lifecycle regressions.
-- [ ] 5.4 Verify app startup, manual refresh, five-minute refresh, hidden-window reactivation, widget coexistence, API-key replacement, and refresh-failure states in the Tauri app without recording credentials.
+- [x] 5.4 Verify app startup, manual refresh, five-minute refresh, hidden-window reactivation, widget coexistence, API-key replacement, and refresh-failure states in the Tauri app without recording credentials.

@@ -11,4 +11,4 @@
 ## 3. Validation
 
 - [x] 3.1 Format changed files and verify `pnpm build`, `cargo test --manifest-path src-tauri/Cargo.toml`, and `openspec validate add-openai-usage-pagination --strict` pass.
-- [ ] 3.2 Manually inspect test-mode dashboard and widget data to confirm existing USD/KRW and refresh status rendering still works.
+- [x] 3.2 Manually inspect test-mode dashboard and widget data to confirm existing USD/KRW and refresh status rendering still works.
