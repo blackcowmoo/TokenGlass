@@ -5,7 +5,11 @@
 TokenGlass is a Tauri 2 desktop app with a React/TypeScript frontend and Rust backend.
 
 - `src/`: React UI. `App.tsx` is the dashboard, `Widget.tsx` is the floating widget, and `usage.ts` holds shared usage types and formatting logic.
-- `src-tauri/src/lib.rs`: Tauri commands, API integration, tray/window behavior, and Rust unit tests. `src-tauri/capabilities/` defines Tauri permissions.
+- `src-tauri/src/lib.rs`: application composition root; registers Tauri state, plugins, lifecycle hooks, and frontend command handlers. `main.rs` remains the minimal native entry point.
+- `src-tauri/src/commands/`: Tauri command boundary. Keep `chatgpt.rs`, `openai.rs`, and `diagnostics.rs` focused on request/response translation; delegate domain work to their owning modules.
+- `src-tauri/src/codex/`: bundled Codex Sidecar process lifecycle and JSON-RPC-style IPC.
+- `src-tauri/src/openai/`: OpenAI API client, pagination and aggregation, time bounds, cache coordination, and serialized usage types.
+- `src-tauri/src/window/`: system tray, main-window lifecycle, and floating-widget persistence/creation. `src-tauri/capabilities/` defines Tauri permissions.
 - `scripts/`: sidecar preparation and Windows test-build automation.
 - `docs/`: manual verification guides; `openspec/` contains active specifications, approved main specs, and archived changes.
 
@@ -28,7 +32,7 @@ Biome uses two-space indentation and a 100-character line width. Run formatting 
 
 ## Testing Guidelines
 
-Add Rust tests beside related backend behavior in `src-tauri/src/lib.rs`; use descriptive scenario-oriented test names. At minimum, run `pnpm build` and relevant `cargo test` commands. For window, tray, widget, OAuth, or scaling changes, manually verify with `pnpm tauri dev`; follow [docs/windows-x64-test.md](docs/windows-x64-test.md) for Windows acceptance checks.
+Add Rust tests beside the related module using a local `#[cfg(test)] mod tests`; use descriptive scenario-oriented test names. Keep pure OpenAI tests with `bounds.rs`, `client.rs`, or `cache.rs`, and diagnostics redaction tests with `commands/diagnostics.rs`. At minimum, run `pnpm build` and relevant `cargo test` commands. For window, tray, widget, OAuth, or scaling changes, manually verify with `pnpm tauri dev`; follow [docs/windows-x64-test.md](docs/windows-x64-test.md) for Windows acceptance checks.
 
 ## Commits, Pull Requests, and Security
 
