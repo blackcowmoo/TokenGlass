@@ -1,0 +1,17 @@
+{
+  "default": {
+    "identifier": "default",
+    "description": "Capability for the main window",
+    "local": true,
+    "windows": ["main"],
+    "permissions": [
+      "core:default",
+      "opener:default",
+      "store:default",
+      {
+        "identifier": "shell:allow-spawn",
+        "allow": [{ "args": ["app-server"], "name": "binaries/codex", "sidecar": true }]
+      }
+    ]
+  }
+}
