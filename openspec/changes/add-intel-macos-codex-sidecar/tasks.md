@@ -11,3 +11,4 @@
 ## 3. Integrated verification
 
 - [x] 3.1 Run formatting, OpenSpec strict validation, and the frontend build to verify the complete preparation flow remains valid.
+- [x] 3.2 Add an Intel macOS GitHub Actions workflow that prepares the sidecar, verifies the x86_64 target, and builds a Tauri app bundle.

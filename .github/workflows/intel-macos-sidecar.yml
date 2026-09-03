@@ -1,0 +1,37 @@
+name: Intel macOS Sidecar
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+jobs:
+  intel-macos-sidecar:
+    runs-on: macos-15-intel
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - name: Verify Intel macOS runner
+        run: test "$(uname -m)" = x86_64
+      - run: pnpm test:sidecar-target
+      - run: pnpm prepare:sidecar
+      - name: Verify Intel macOS sidecar
+        run: |
+          sidecar_path=src-tauri/binaries/codex-x86_64-apple-darwin
+          test -x "$sidecar_path"
+          "$sidecar_path" --version
+      - run: pnpm tauri build --bundles app --no-sign
+      - name: Verify bundled Intel macOS sidecar
+        run: |
+          bundle_path=src-tauri/target/release/bundle/macos/tokenglass.app
+          test -d "$bundle_path"
+          find "$bundle_path" -type f -name codex-x86_64-apple-darwin -perm -u+x -print -quit | grep -q .

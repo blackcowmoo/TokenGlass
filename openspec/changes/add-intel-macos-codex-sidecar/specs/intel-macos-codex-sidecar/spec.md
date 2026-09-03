@@ -18,6 +18,15 @@ Intel 기반 macOS 사용자가 별도 Codex CLI 설치 없이 번들 Codex App 
 - **WHEN** 실행 가능한 `codex-x86_64-apple-darwin` sidecar가 이미 있을 때
 - **THEN** 시스템은 설치 프로그램을 다시 실행하지 않고 기존 sidecar를 재사용해야 한다
 
+### Requirement: Intel macOS 지속적 통합 검증
+
+시스템은 Intel macOS CI 환경에서 sidecar 준비과 Tauri 앱 번들 생성을 검증해야 한다 (MUST). 검증은 Intel 아키텍처에서 실행되고, 실행 가능한 `codex-x86_64-apple-darwin` sidecar가 준비된 것을 확인해야 한다 (MUST).
+
+#### Scenario: Intel macOS CI 검증 성공
+
+- **WHEN** 지원 대상 브랜치로 push하거나 pull request가 열릴 때
+- **THEN** CI는 Intel macOS 환경에서 sidecar를 준비하고, 실행 권한 및 target 파일명을 확인한 뒤 Tauri 앱 번들을 생성해야 한다
+
 ### Requirement: Intel macOS 지원 범위 안내
 
 시스템은 문서에서 Apple Silicon 및 Intel 기반 macOS가 자동 sidecar 준비 대상임을 정확히 안내해야 한다 (MUST).
