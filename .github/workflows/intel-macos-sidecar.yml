@@ -34,4 +34,6 @@ jobs:
         run: |
           bundle_path=src-tauri/target/release/bundle/macos/tokenglass.app
           test -d "$bundle_path"
-          find "$bundle_path" -type f -name codex-x86_64-apple-darwin -perm -u+x -print -quit | grep -q .
+          bundled_sidecar_path="$bundle_path/Contents/MacOS/codex"
+          test -x "$bundled_sidecar_path"
+          "$bundled_sidecar_path" --version
