@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "prepare:sidecar": "node scripts/prepare-codex-sidecar.mjs",
+    "test:sidecar-target": "node --test scripts/codex-sidecar-target.test.mjs",
     "format": "biome format --write . && cargo fmt --manifest-path src-tauri/Cargo.toml",
     "format:check": "biome format . && cargo fmt --check --manifest-path src-tauri/Cargo.toml",
     "dev": "vite",

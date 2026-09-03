@@ -1,19 +1,13 @@
-import { access } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
+import { access } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { getCodexSidecarTarget } from "./codex-sidecar-target.mjs";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const binariesDir = resolve(projectRoot, "src-tauri", "binaries");
-const targetTriple =
-  process.platform === "win32"
-    ? "x86_64-pc-windows-msvc"
-    : process.platform === "darwin" && process.arch === "arm64"
-      ? "aarch64-apple-darwin"
-      : process.platform === "linux" && process.arch === "x64"
-        ? "x86_64-unknown-linux-gnu"
-        : null;
+const targetTriple = getCodexSidecarTarget(process.platform, process.arch);
 
 if (!targetTriple) {
   throw new Error(
