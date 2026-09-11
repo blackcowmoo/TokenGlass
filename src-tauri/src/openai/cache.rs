@@ -22,6 +22,12 @@ pub struct OpenAiUsageState {
     refresh_gate: Mutex<()>,
 }
 
+impl OpenAiUsageState {
+    pub async fn clear_cache(&self) {
+        *self.cache.lock().await = None;
+    }
+}
+
 fn openai_key_fingerprint(admin_key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(admin_key.as_bytes());
