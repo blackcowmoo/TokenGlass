@@ -44,6 +44,7 @@ const colors = ["#10A37F", "#3B82F6", "#A855F7", "#F59E0B", "#EC4899"];
 function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [adminKey, setAdminKey] = useState("");
+  const [keyConfigured, setKeyConfigured] = useState(false);
   const [exchangeRate, setExchangeRate] = useState(usdToKrwRate(undefined));
   const [exchangeRateInput, setExchangeRateInput] = useState(String(usdToKrwRate(undefined)));
   const [exchangeRateError, setExchangeRateError] = useState<string | null>(null);
@@ -56,17 +57,15 @@ function App() {
   );
   const [subscriptionLoading, setSubscriptionLoading] = useState(false);
   const [diagnostics, setDiagnostics] = useState<string | null>(null);
-  const adminKeyRef = useRef("");
   const usageRef = useRef<Usage | null>(null);
   const loadingRef = useRef(false);
 
-  const refresh = useCallback(async (key = adminKeyRef.current, forceRefresh = false) => {
+  const refresh = useCallback(async (forceRefresh = false) => {
     if (isTestMode) {
       setUsage(sampleUsage);
       setStatus("TEST MODE · Sample data · network disabled");
       return;
     }
-    if (!key.trim()) return;
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
@@ -74,10 +73,7 @@ function App() {
       usageRef.current ? "OpenAI 사용량을 업데이트하는 중…" : "OpenAI 사용량을 불러오는 중…",
     );
     try {
-      const snapshot = await invoke<UsageSnapshot>("fetch_openai_usage", {
-        adminKey: key,
-        forceRefresh,
-      });
+      const snapshot = await invoke<UsageSnapshot>("fetch_openai_usage", { forceRefresh });
       usageRef.current = snapshot.usage;
       setUsage(snapshot.usage);
       const lastSuccess = formatLastSuccess(snapshot.fetchedAt);
@@ -107,14 +103,13 @@ function App() {
         }
         if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
           const store = await Store.load("settings.json");
-          const key = (await store.get<string>("tokenglass_openai_admin_key")) ?? "";
           const savedExchangeRate = await store.get<unknown>("tokenglass_usd_to_krw_rate");
           const nextExchangeRate = usdToKrwRate(savedExchangeRate);
-          setAdminKey(key);
           setExchangeRate(nextExchangeRate);
           setExchangeRateInput(String(nextExchangeRate));
-          adminKeyRef.current = key;
-          if (key) await refresh(key);
+          const keyStatus = await invoke<{ configured: boolean }>("get_openai_key_status");
+          setKeyConfigured(keyStatus.configured);
+          if (keyStatus.configured) await refresh();
         } else {
           console.warn("Tauri 환경이 아닙니다. 웹 브라우저 모드로 동작합니다.");
         }
@@ -135,6 +130,15 @@ function App() {
     };
   }, [refresh]);
 
+  const deleteOpenAiKey = async () => {
+    if (isTestMode) return;
+    await invoke("delete_openai_admin_key");
+    setKeyConfigured(false);
+    setUsage(null);
+    usageRef.current = null;
+    setStatus("OpenAI 조직 관리자 API 키를 연결하세요.");
+  };
+
   const saveSettings = async () => {
     if (isTestMode) return;
     const nextKey = adminKey.trim();
@@ -143,12 +147,13 @@ function App() {
       setExchangeRateError("환율은 0보다 큰 숫자로 입력하세요.");
       return;
     }
-    const keyChanged = nextKey !== adminKeyRef.current;
+    const keyChanged = nextKey.length > 0;
     const store = await Store.load("settings.json");
-    await store.set("tokenglass_openai_admin_key", nextKey);
+    if (nextKey) await invoke("save_openai_admin_key", { adminKey: nextKey });
     await store.set("tokenglass_usd_to_krw_rate", nextExchangeRate);
     await store.save();
-    adminKeyRef.current = nextKey;
+    setAdminKey("");
+    setKeyConfigured(keyConfigured || keyChanged);
     setExchangeRate(nextExchangeRate);
     setExchangeRateInput(String(nextExchangeRate));
     setExchangeRateError(null);
@@ -157,7 +162,7 @@ function App() {
       usageRef.current = null;
       setUsage(null);
     }
-    if (nextKey) await refresh(nextKey, true);
+    if (nextKey) await refresh(true);
     else setStatus("OpenAI 조직 관리자 API 키를 연결하세요.");
   };
 
@@ -245,7 +250,7 @@ function App() {
                 onChange={(event) => setAdminKey(event.target.value)}
               />
               <p className="help-text">
-                Usage/Costs API는 일반 프로젝트 키가 아닌 조직 관리자 키가 필요합니다.
+                {keyConfigured ? "연결됨 · 새 키를 입력하면 기존 키를 교체합니다." : "Usage/Costs API는 일반 프로젝트 키가 아닌 조직 관리자 키가 필요합니다."}
               </p>
               <label htmlFor="usd-to-krw-rate">수동 환율 (1 USD당 KRW)</label>
               <input
@@ -270,6 +275,9 @@ function App() {
               </div>
             </div>
             <div className="modal-footer">
+              <button className="secondary-btn" disabled={!keyConfigured || loading} onClick={() => void deleteOpenAiKey()}>
+                키 삭제
+              </button>
               <button
                 className="primary-btn"
                 disabled={loading}
@@ -314,8 +322,8 @@ function App() {
             <button
               className="icon-btn"
               title="새로고침"
-              disabled={loading || (!adminKey && !isTestMode)}
-              onClick={() => void refresh(undefined, true)}
+              disabled={loading || (!keyConfigured && !isTestMode)}
+              onClick={() => void refresh(true)}
             >
               ↻
             </button>
