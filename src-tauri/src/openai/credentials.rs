@@ -119,7 +119,8 @@ fn map_keyring_error(error: KeyringError) -> CredentialError {
 
 #[cfg(test)]
 mod tests {
-    use super::{CredentialBackend, CredentialError, OpenAiCredentials};
+    use super::{map_keyring_error, CredentialBackend, CredentialError, OpenAiCredentials};
+    use keyring::Error as KeyringError;
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
@@ -155,5 +156,28 @@ mod tests {
         assert_eq!(credentials.delete().await, Ok(()));
         assert_eq!(credentials.delete().await, Ok(()));
         assert_eq!(credentials.get().await, Ok(None));
+    }
+
+    #[test]
+    fn keyring_errors_map_to_stable_secret_free_categories() {
+        let platform_error = || {
+            Box::new(std::io::Error::other("private platform detail"))
+                as Box<dyn std::error::Error + Send + Sync>
+        };
+        assert_eq!(
+            map_keyring_error(KeyringError::NoStorageAccess(platform_error())),
+            CredentialError::LockedOrDenied
+        );
+        assert_eq!(
+            map_keyring_error(KeyringError::PlatformFailure(platform_error())),
+            CredentialError::Unavailable
+        );
+        assert_eq!(
+            map_keyring_error(KeyringError::BadEncoding(b"secret".to_vec())),
+            CredentialError::OperationFailed
+        );
+        assert_eq!(CredentialError::LockedOrDenied.code(), "lockedOrDenied");
+        assert_eq!(CredentialError::Unavailable.code(), "unavailable");
+        assert_eq!(CredentialError::OperationFailed.code(), "operationFailed");
     }
 }
