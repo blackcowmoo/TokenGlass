@@ -29,11 +29,9 @@ export default function Widget() {
       try {
         if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
           const store = await Store.load("settings.json");
-          const key = (await store.get<string>("tokenglass_openai_admin_key")) ?? "";
           setExchangeRate(usdToKrwRate(await store.get<unknown>("tokenglass_usd_to_krw_rate")));
-          if (key) {
+          {
             const snapshot = await invoke<UsageSnapshot>("fetch_openai_usage", {
-              adminKey: key,
               forceRefresh: false,
             });
             setUsage(snapshot.usage);

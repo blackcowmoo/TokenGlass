@@ -22,6 +22,36 @@ pub struct OpenAiUsageState {
     refresh_gate: Mutex<()>,
 }
 
+impl OpenAiUsageState {
+    pub async fn clear_cache(&self) {
+        *self.cache.lock().await = None;
+    }
+
+    #[cfg(test)]
+    pub async fn seed_test_cache(&self, key: &str) {
+        *self.cache.lock().await = Some(CachedOpenAiUsage {
+            key_fingerprint: openai_key_fingerprint(key),
+            usage: OpenAiUsage {
+                total_billed: 1.0,
+                today_usage: 0.5,
+                currency: "USD".to_string(),
+                input_tokens: 1,
+                output_tokens: 1,
+                models: Vec::new(),
+                period_start: 1,
+                period_end: 2,
+            },
+            fetched_at: 1,
+            generation: 1,
+        });
+    }
+
+    #[cfg(test)]
+    pub async fn has_test_cache(&self) -> bool {
+        self.cache.lock().await.is_some()
+    }
+}
+
 fn openai_key_fingerprint(admin_key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(admin_key.as_bytes());
@@ -257,5 +287,15 @@ mod tests {
             .await
             .expect("waiting request should complete"));
         assert_eq!(refresh_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn clearing_cache_removes_the_cached_usage_entry() {
+        let state = OpenAiUsageState::default();
+        *state.cache.lock().await = Some(cached_usage("sk-admin-canary-secret", 1_000, 1));
+
+        state.clear_cache().await;
+
+        assert!(state.cache.lock().await.is_none());
     }
 }
