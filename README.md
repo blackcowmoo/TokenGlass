@@ -47,7 +47,7 @@ TokenGlass는 서로 다른 과금 체계를 분리해 표시합니다.
 
 OAuth 토큰은 TokenGlass가 직접 저장하거나 전송하지 않습니다. 앱 번들에 포함된 Codex App Server 사이드카가 인증 토큰의 보관과 갱신을 담당하며, TokenGlass는 App Server의 사용량 조회 결과만 읽습니다. 따라서 사용자는 별도로 Codex CLI를 설치할 필요가 없습니다.
 
-> `pnpm build` 또는 `pnpm tauri build`는 공식 Codex 설치 프로그램으로 현재 플랫폼용 사이드카를 자동 준비합니다. 사이드카 실행 파일은 Git에 커밋하지 않으며, 최종 사용자에게는 Codex CLI 설치가 필요하지 않습니다. 현재 자동 준비 대상은 Apple Silicon macOS와 Windows x64이며, Intel macOS 및 Linux는 별도 target triple용 준비가 필요합니다.
+> `pnpm build` 또는 `pnpm tauri build`는 공식 Codex 설치 프로그램으로 현재 플랫폼용 사이드카를 자동 준비합니다. 사이드카 실행 파일은 Git에 커밋하지 않으며, 최종 사용자에게는 Codex CLI 설치가 필요하지 않습니다. 현재 자동 준비 대상은 Apple Silicon 및 Intel macOS, Windows x64, Linux x64입니다. 그 밖의 플랫폼은 별도 target triple용 준비가 필요합니다.
 
 > ChatGPT/Codex 구독 한도와 OpenAI API 비용은 별도 체계입니다. API 비용은 조직 관리자 키로, 구독 한도 및 토큰 활동은 ChatGPT OAuth로 조회해야 합니다.
 
