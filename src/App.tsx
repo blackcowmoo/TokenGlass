@@ -250,7 +250,9 @@ function App() {
                 onChange={(event) => setAdminKey(event.target.value)}
               />
               <p className="help-text">
-                {keyConfigured ? "연결됨 · 새 키를 입력하면 기존 키를 교체합니다." : "Usage/Costs API는 일반 프로젝트 키가 아닌 조직 관리자 키가 필요합니다."}
+                {keyConfigured
+                  ? "연결됨 · 새 키를 입력하면 기존 키를 교체합니다."
+                  : "Usage/Costs API는 일반 프로젝트 키가 아닌 조직 관리자 키가 필요합니다."}
               </p>
               <label htmlFor="usd-to-krw-rate">수동 환율 (1 USD당 KRW)</label>
               <input
@@ -275,7 +277,11 @@ function App() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="secondary-btn" disabled={!keyConfigured || loading} onClick={() => void deleteOpenAiKey()}>
+              <button
+                className="secondary-btn"
+                disabled={!keyConfigured || loading}
+                onClick={() => void deleteOpenAiKey()}
+              >
                 키 삭제
               </button>
               <button
